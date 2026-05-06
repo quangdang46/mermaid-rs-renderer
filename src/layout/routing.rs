@@ -676,6 +676,11 @@ impl EdgeOccupancy {
     }
 
     pub(super) fn add_path(&mut self, points: &[(f32, f32)]) {
+        self.add_path_with_weight(points, 1);
+    }
+
+    pub(super) fn add_path_with_weight(&mut self, points: &[(f32, f32)], multiplier: u16) {
+        let multiplier = multiplier.max(1);
         for segment in points.windows(2) {
             let (x1, y1) = segment[0];
             let (x2, y2) = segment[1];
@@ -694,7 +699,8 @@ impl EdgeOccupancy {
                             (0, 0) => 3u16,
                             (1, 0) | (0, 1) => 2u16,
                             _ => 1u16,
-                        };
+                        }
+                        .saturating_mul(multiplier);
                         let idx = (ix + dx_cell, iy + dy_cell);
                         let entry = self.weights.entry(idx).or_insert(0);
                         *entry = entry.saturating_add(weight);
@@ -702,6 +708,21 @@ impl EdgeOccupancy {
                 }
             }
         }
+    }
+
+    pub(super) fn merge_from(&mut self, other: &EdgeOccupancy) {
+        for (cell, weight) in &other.weights {
+            let entry = self.weights.entry(*cell).or_insert(0);
+            *entry = entry.saturating_add(*weight);
+        }
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.weights.is_empty()
+    }
+
+    pub(super) fn cell_size(&self) -> f32 {
+        self.cell
     }
 
     pub(super) fn weight_at(&self, x: f32, y: f32) -> u16 {

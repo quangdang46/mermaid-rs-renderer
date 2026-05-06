@@ -1582,6 +1582,89 @@ fn occupancy_from_other_routes(
     any.then_some(occupancy)
 }
 
+fn flowchart_negotiated_congestion_passes(graph: &Graph) -> usize {
+    if graph.kind != DiagramKind::Flowchart || graph.edges.len() < 12 {
+        return 0;
+    }
+    let node_count = graph.nodes.len().max(1);
+    let density = graph.edges.len() as f32 / node_count as f32;
+    if graph.edges.len() <= 64 && density >= 1.1 {
+        2
+    } else if graph.edges.len() <= 160 && density >= 1.35 {
+        1
+    } else {
+        0
+    }
+}
+
+fn combined_occupancy_from_other_routes(
+    routed_points: &[Vec<(f32, f32)>],
+    excluded_idx: usize,
+    history: &EdgeOccupancy,
+    config: &LayoutConfig,
+) -> Option<EdgeOccupancy> {
+    let mut occupancy = EdgeOccupancy::new(
+        config.node_spacing.max(MIN_NODE_SPACING_FLOOR) * EDGE_OCCUPANCY_CELL_RATIO,
+    );
+    if !history.is_empty() {
+        occupancy.merge_from(history);
+    }
+    for (idx, points) in routed_points.iter().enumerate() {
+        if idx == excluded_idx || points.len() < 2 {
+            continue;
+        }
+        occupancy.add_path(points);
+    }
+    (!occupancy.is_empty()).then_some(occupancy)
+}
+
+fn congestion_overlap_trigger(points: &[(f32, f32)], occupancy: &EdgeOccupancy) -> u32 {
+    ((path_length(points) / occupancy.cell_size()) * 0.22)
+        .max(3.0)
+        .ceil() as u32
+}
+
+fn congestion_improves_enough(
+    candidate_score: GlobalRouteScore,
+    baseline_score: GlobalRouteScore,
+    candidate_congestion: u32,
+    baseline_congestion: u32,
+    config: &LayoutConfig,
+) -> bool {
+    if baseline_score.hard == 0 && candidate_score.hard > 0 {
+        return false;
+    }
+    if baseline_score.non_endpoint_hits == 0 && candidate_score.non_endpoint_hits > 0 {
+        return false;
+    }
+    if candidate_score.endpoint_reentries > baseline_score.endpoint_reentries {
+        return false;
+    }
+    if candidate_score.label_hits > baseline_score.label_hits {
+        return false;
+    }
+    if candidate_score.len > baseline_score.len * 2.2 + config.node_spacing * 4.0 {
+        return false;
+    }
+    if candidate_score.bends > baseline_score.bends {
+        return false;
+    }
+    if candidate_score.len > baseline_score.len * 1.15 + config.node_spacing {
+        return false;
+    }
+    if global_route_score_is_better(candidate_score, baseline_score) {
+        return true;
+    }
+    let congestion_gain = baseline_congestion.saturating_sub(candidate_congestion);
+    if congestion_gain < 5 {
+        return false;
+    }
+    let has_visual_congestion_gain = candidate_score.crossings < baseline_score.crossings
+        || candidate_score.overlap + 0.05 < baseline_score.overlap
+        || candidate_congestion.saturating_mul(2) < baseline_congestion;
+    has_visual_congestion_gain
+}
+
 #[allow(clippy::too_many_arguments)]
 fn optimize_flowchart_routes_globally(
     graph: &Graph,
@@ -1753,6 +1836,197 @@ fn optimize_flowchart_routes_globally(
             if global_route_score_is_better(score, baseline) {
                 routed_points[idx] = candidate;
                 changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn negotiate_flowchart_route_congestion(
+    graph: &Graph,
+    nodes: &BTreeMap<String, NodeLayout>,
+    subgraphs: &[SubgraphLayout],
+    obstacles: &[Obstacle],
+    route_label_obstacles: &mut Vec<Obstacle>,
+    routing_grid: Option<&RoutingGrid>,
+    edge_ports: &[EdgePortInfo],
+    lane_offsets: &[f32],
+    route_order: &[(u8, f32, f32, usize)],
+    route_labels_via: bool,
+    route_label_plans: &mut [Option<route_labels::RouteLabelPlan>],
+    label_anchors: &mut [Option<(f32, f32)>],
+    edge_route_labels: &[Option<TextBlock>],
+    edge_label_pad_x: f32,
+    edge_label_pad_y: f32,
+    routed_points: &mut [Vec<(f32, f32)>],
+    reserved_channels: &[ReservedRoutingChannel],
+    config: &LayoutConfig,
+) {
+    let passes = flowchart_negotiated_congestion_passes(graph);
+    if passes == 0 {
+        return;
+    }
+
+    let mut order: Vec<usize> = route_order.iter().map(|(_, _, _, idx)| *idx).collect();
+    if order.len() != graph.edges.len() {
+        order = (0..graph.edges.len()).collect();
+    }
+
+    let mut history = EdgeOccupancy::new(
+        config.node_spacing.max(MIN_NODE_SPACING_FLOOR) * EDGE_OCCUPANCY_CELL_RATIO,
+    );
+
+    for _ in 0..passes {
+        let mut changed = false;
+        for &idx in &order {
+            let Some(edge) = graph.edges.get(idx) else {
+                continue;
+            };
+            if edge.from == edge.to || routed_points.get(idx).is_none_or(|points| points.len() < 2)
+            {
+                continue;
+            }
+            let Some(occupancy) =
+                combined_occupancy_from_other_routes(routed_points, idx, &history, config)
+            else {
+                continue;
+            };
+            let baseline_congestion = occupancy.score_path(&routed_points[idx]);
+            let baseline_overlap = occupancy.overlap_count(&routed_points[idx]);
+            if baseline_overlap < congestion_overlap_trigger(&routed_points[idx], &occupancy)
+                && baseline_congestion < 18
+            {
+                continue;
+            }
+
+            let Some((from, to)) = effective_edge_endpoint_layouts(graph, nodes, subgraphs, edge)
+            else {
+                continue;
+            };
+            let port_info = edge_ports.get(idx).copied().unwrap_or(EdgePortInfo {
+                start_side: EdgeSide::Right,
+                end_side: EdgeSide::Left,
+                start_offset: 0.0,
+                end_offset: 0.0,
+            });
+            let existing_segments = collect_other_flowchart_segments(routed_points, idx);
+            let preferred_label = route_label_plans
+                .get(idx)
+                .and_then(|plan| plan.as_ref())
+                .map(|plan| (plan.obstacle_id.clone(), plan.obstacle_index));
+            let preferred_label_id = preferred_label.as_ref().map(|(id, _)| id.as_str());
+            let preferred_label_obstacle = preferred_label
+                .as_ref()
+                .and_then(|(_, obstacle_index)| route_label_obstacles.get(*obstacle_index));
+            let preferred_label_clearance =
+                (edge_label_pad_x.max(edge_label_pad_y) + config.node_spacing * 0.25).max(8.0);
+            let baseline = score_global_route_candidate(
+                &routed_points[idx],
+                edge,
+                nodes,
+                obstacles,
+                route_label_obstacles,
+                &existing_segments,
+                preferred_label_id,
+            );
+            let max_edge_label_chars = [
+                edge.label.as_deref(),
+                edge.start_label.as_deref(),
+                edge.end_label.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .map(|label| label.chars().count())
+            .max()
+            .unwrap_or(0);
+            let has_endpoint_label = edge.start_label.is_some() || edge.end_label.is_some();
+            let avoid_short_tie = has_endpoint_label
+                || max_edge_label_chars >= FLOWCHART_EDGE_LABEL_WRAP_TRIGGER_CHARS;
+            let route_ctx = RouteContext {
+                from_id: &edge.from,
+                to_id: &edge.to,
+                from: &from,
+                to: &to,
+                direction: graph.direction,
+                config,
+                obstacles,
+                label_obstacles: route_label_obstacles,
+                fast_route: false,
+                base_offset: lane_offsets.get(idx).copied().unwrap_or_default(),
+                start_side: port_info.start_side,
+                end_side: port_info.end_side,
+                start_offset: port_info.start_offset,
+                end_offset: port_info.end_offset,
+                stub_len: port_stub_length(config, &from, &to),
+                start_inset: if edge.arrow_start {
+                    crate::edge_geometry::arrowhead_inset(graph.kind, edge.arrow_start_kind)
+                } else {
+                    0.0
+                },
+                end_inset: if edge.arrow_end {
+                    crate::edge_geometry::arrowhead_inset(graph.kind, edge.arrow_end_kind)
+                } else {
+                    0.0
+                },
+                prefer_shorter_ties: !avoid_short_tie,
+                preferred_label_id,
+                preferred_label_center: None,
+                preferred_label_obstacle,
+                preferred_label_clearance,
+                reserved_channels,
+                force_preferred_label_via: false,
+                coarse_grid_retry: true,
+            };
+            let mut candidate = route_edge_with_avoidance(
+                &route_ctx,
+                Some(&occupancy),
+                routing_grid,
+                Some(existing_segments.as_slice()),
+            );
+            if route_labels_via {
+                let mut sync_ctx = route_labels::RouteLabelSyncContext {
+                    direction: graph.direction,
+                    kind: graph.kind,
+                    route_label_plans,
+                    label_anchors,
+                    edge_route_labels,
+                    route_label_obstacles,
+                    edge_label_pad_x,
+                    edge_label_pad_y,
+                    update_obstacle: true,
+                };
+                route_labels::sync_route_label_plan_with_points(idx, &mut candidate, &mut sync_ctx);
+            }
+            let candidate_score = score_global_route_candidate(
+                &candidate,
+                edge,
+                nodes,
+                obstacles,
+                route_label_obstacles,
+                &existing_segments,
+                preferred_label_id,
+            );
+            let candidate_congestion = occupancy.score_path(&candidate);
+
+            if congestion_improves_enough(
+                candidate_score,
+                baseline,
+                candidate_congestion,
+                baseline_congestion,
+                config,
+            ) {
+                if candidate_congestion >= baseline_congestion {
+                    history.add_path_with_weight(&candidate, 2);
+                }
+                routed_points[idx] = candidate;
+                changed = true;
+            } else if baseline_overlap
+                >= congestion_overlap_trigger(&routed_points[idx], &occupancy)
+            {
+                history.add_path_with_weight(&routed_points[idx], 2);
             }
         }
         if !changed {
@@ -2487,6 +2761,26 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
             &reserved_channels,
             config,
         );
+        negotiate_flowchart_route_congestion(
+            graph,
+            nodes,
+            subgraphs,
+            &obstacles,
+            &mut route_label_obstacles,
+            routing_grid.as_ref(),
+            &edge_ports,
+            &lane_offsets,
+            &route_order,
+            route_labels_via,
+            &mut route_label_plans,
+            &mut label_anchors,
+            edge_route_labels,
+            edge_label_pad_x,
+            edge_label_pad_y,
+            &mut routed_points,
+            &reserved_channels,
+            config,
+        );
     }
 
     post_route::apply_edge_path_cleanup(graph, nodes, &mut routed_points, config);
@@ -2826,5 +3120,40 @@ mod tests {
             ),
             "expected hub-side horizontal channels around the dense hub: {channels:?}"
         );
+    }
+
+    #[test]
+    fn congestion_acceptance_requires_no_hard_regression() {
+        let config = LayoutConfig::default();
+        let baseline = GlobalRouteScore {
+            hard: 0,
+            endpoint_reentries: 0,
+            non_endpoint_hits: 0,
+            label_hits: 0,
+            crossings: 1,
+            overlap: 5.0,
+            bends: 3,
+            len: 240.0,
+        };
+        let mut candidate = baseline;
+        candidate.hard = 1;
+        candidate.overlap = 0.0;
+        assert!(!congestion_improves_enough(
+            candidate, baseline, 0, 100, &config
+        ));
+
+        candidate = baseline;
+        candidate.overlap = 2.0;
+        candidate.len = 260.0;
+        assert!(congestion_improves_enough(
+            candidate, baseline, 20, 100, &config
+        ));
+
+        candidate = baseline;
+        candidate.overlap = 0.0;
+        candidate.bends += 1;
+        assert!(!congestion_improves_enough(
+            candidate, baseline, 0, 100, &config
+        ));
     }
 }
