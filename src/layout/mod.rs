@@ -1310,6 +1310,45 @@ mod tests {
     use crate::layout::ranking::rank_edges_for_manual_layout;
     use crate::parser::parse_mermaid;
 
+    fn point_inside_node_strict(node: &NodeLayout, point: (f32, f32)) -> bool {
+        let eps = 0.5;
+        if node.shape == NodeShape::Diamond {
+            let cx = node.x + node.width * 0.5;
+            let cy = node.y + node.height * 0.5;
+            let rx = (node.width * 0.5 - eps).max(1.0);
+            let ry = (node.height * 0.5 - eps).max(1.0);
+            (point.0 - cx).abs() / rx + (point.1 - cy).abs() / ry < 1.0
+        } else {
+            point.0 > node.x + eps
+                && point.0 < node.x + node.width - eps
+                && point.1 > node.y + eps
+                && point.1 < node.y + node.height - eps
+        }
+    }
+
+    fn segment_hits_node_interior(a: (f32, f32), b: (f32, f32), node: &NodeLayout) -> bool {
+        let steps = (((b.0 - a.0).hypot(b.1 - a.1) / 4.0).ceil() as usize).max(1);
+        (1..steps).any(|i| {
+            let t = i as f32 / steps as f32;
+            point_inside_node_strict(node, (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t))
+        })
+    }
+
+    fn endpoint_reenters_node(points: &[(f32, f32)], node: &NodeLayout, is_source: bool) -> bool {
+        if points.len() < 3 {
+            return false;
+        }
+        let last_segment_idx = points.len().saturating_sub(2);
+        points.windows(2).enumerate().any(|(idx, segment)| {
+            let allowed_endpoint_stub = if is_source {
+                idx == 0
+            } else {
+                idx == last_segment_idx
+            };
+            !allowed_endpoint_stub && segment_hits_node_interior(segment[0], segment[1], node)
+        })
+    }
+
     #[test]
     fn wraps_long_labels() {
         let theme = Theme::modern();
@@ -1537,6 +1576,58 @@ flowchart LR
                 edge.to
             );
         }
+    }
+
+    #[test]
+    fn flowchart_candidate_ports_prefer_facing_leaf_ports_without_endpoint_reentry() {
+        let parsed = parse_mermaid(
+            r#"
+flowchart LR
+    hub{Decision Hub}
+    a[Alpha]
+    b[Beta]
+    c[Gamma]
+    d[Delta]
+    e[Epsilon]
+    f[Zeta]
+    a --> hub
+    b --> hub
+    c --> hub
+    d --> hub
+    hub --> e
+    hub --> f
+    e -.-> hub
+    f -.-> hub
+"#,
+        )
+        .expect("parse failed");
+        let layout = compute_layout(&parsed.graph, &Theme::modern(), &LayoutConfig::default());
+
+        let gamma = layout.nodes.get("c").unwrap();
+        let gamma_edge = layout
+            .edges
+            .iter()
+            .find(|edge| edge.from == "c" && edge.to == "hub")
+            .expect("missing Gamma -> hub edge");
+        assert!(
+            gamma_edge.points[0].0 >= gamma.x + gamma.width - 1.0,
+            "Gamma should use the facing right-side port, got {:?} for node x={} width={}",
+            gamma_edge.points,
+            gamma.x,
+            gamma.width
+        );
+
+        let epsilon = layout.nodes.get("e").unwrap();
+        let epsilon_return = layout
+            .edges
+            .iter()
+            .find(|edge| edge.from == "e" && edge.to == "hub")
+            .expect("missing Epsilon -> hub return edge");
+        assert!(
+            !endpoint_reenters_node(&epsilon_return.points, epsilon, true),
+            "Epsilon return edge should not re-enter the Epsilon node: {:?}",
+            epsilon_return.points
+        );
     }
 
     #[test]

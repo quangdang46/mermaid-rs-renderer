@@ -1416,6 +1416,7 @@ fn push_route_candidate(
         return;
     }
     let hard_hits = path_obstacle_intersections(&points, ctx.obstacles, ctx.from_id, ctx.to_id);
+    let endpoint_hits = path_endpoint_intrusions(&points, ctx);
     let soft_hits = path_obstacle_near_intersections(
         &points,
         ctx.obstacles,
@@ -1423,7 +1424,10 @@ fn push_route_candidate(
         ctx.to_id,
         ROUTE_SOFT_NODE_CLEARANCE,
     );
-    let hits = hard_hits.saturating_mul(4).saturating_add(soft_hits);
+    let hits = hard_hits
+        .saturating_mul(4)
+        .saturating_add(endpoint_hits.saturating_mul(16))
+        .saturating_add(soft_hits);
     let own_label = preferred_label_metrics(&points, ctx);
     let hard_labels =
         path_label_intersections(&points, ctx.label_obstacles, ctx.preferred_label_id);
@@ -1467,6 +1471,72 @@ pub(super) fn path_coords_reasonable(points: &[(f32, f32)]) -> bool {
     points
         .iter()
         .all(|(x, y)| x.is_finite() && y.is_finite() && x.abs() <= LIMIT && y.abs() <= LIMIT)
+}
+
+fn point_in_polygon_strict(point: (f32, f32), polygon: &[(f32, f32)]) -> bool {
+    if polygon.len() < 3 {
+        return false;
+    }
+    let mut inside = false;
+    let (px, py) = point;
+    let mut prev = polygon[polygon.len() - 1];
+    for &curr in polygon {
+        if (curr.1 > py) != (prev.1 > py) {
+            let denom = prev.1 - curr.1;
+            if denom.abs() > 1e-6 {
+                let x_at_y = (prev.0 - curr.0) * (py - curr.1) / denom + curr.0;
+                if px < x_at_y {
+                    inside = !inside;
+                }
+            }
+        }
+        prev = curr;
+    }
+    inside
+}
+
+fn point_inside_node_shape_strict(node: &NodeLayout, point: (f32, f32)) -> bool {
+    let eps = 0.5;
+    match node.shape {
+        crate::ir::NodeShape::Circle | crate::ir::NodeShape::DoubleCircle => {
+            let cx = node.x + node.width * 0.5;
+            let cy = node.y + node.height * 0.5;
+            let rx = (node.width * 0.5 - eps).max(1.0);
+            let ry = (node.height * 0.5 - eps).max(1.0);
+            let nx = (point.0 - cx) / rx;
+            let ny = (point.1 - cy) / ry;
+            nx * nx + ny * ny < 1.0
+        }
+        _ => shape_polygon_points(node)
+            .is_some_and(|polygon| point_in_polygon_strict(point, &polygon)),
+    }
+}
+
+fn segment_hits_node_shape_interior(a: (f32, f32), b: (f32, f32), node: &NodeLayout) -> bool {
+    let steps = (((b.0 - a.0).hypot(b.1 - a.1) / 4.0).ceil() as usize).max(1);
+    (1..steps).any(|i| {
+        let t = i as f32 / steps as f32;
+        point_inside_node_shape_strict(node, (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t))
+    })
+}
+
+fn path_endpoint_intrusions(points: &[(f32, f32)], ctx: &RouteContext<'_>) -> usize {
+    if points.len() < 3 || ctx.from_id == ctx.to_id {
+        return 0;
+    }
+    let last_segment_idx = points.len().saturating_sub(2);
+    let mut hits = 0usize;
+    for (idx, segment) in points.windows(2).enumerate() {
+        if idx > 0 && segment_hits_node_shape_interior(segment[0], segment[1], ctx.from) {
+            hits += 1;
+        }
+        if idx < last_segment_idx
+            && segment_hits_node_shape_interior(segment[0], segment[1], ctx.to)
+        {
+            hits += 1;
+        }
+    }
+    hits
 }
 
 fn resolve_route_endpoints(ctx: &RouteContext<'_>) -> RouteEndpoints {

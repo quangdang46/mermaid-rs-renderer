@@ -245,6 +245,218 @@ fn choose_outer_back_edge_sides(
     }
 }
 
+fn side_direction(side: EdgeSide) -> (f32, f32) {
+    match side {
+        EdgeSide::Left => (-1.0, 0.0),
+        EdgeSide::Right => (1.0, 0.0),
+        EdgeSide::Top => (0.0, -1.0),
+        EdgeSide::Bottom => (0.0, 1.0),
+    }
+}
+
+fn node_center(node: &NodeLayout) -> (f32, f32) {
+    (node.x + node.width * 0.5, node.y + node.height * 0.5)
+}
+
+fn side_alignment_penalty(side: EdgeSide, from: &NodeLayout, to: &NodeLayout) -> f32 {
+    let (fx, fy) = node_center(from);
+    let (tx, ty) = node_center(to);
+    let dx = tx - fx;
+    let dy = ty - fy;
+    let len = (dx * dx + dy * dy).sqrt().max(1.0);
+    let dir = side_direction(side);
+    let dot = (dir.0 * dx + dir.1 * dy) / len;
+    // Ports that point away from the opposite endpoint are visually surprising,
+    // especially for low-degree leaves around diamonds and hubs. Keep the
+    // penalty continuous so a route with much better hard geometry can still win.
+    (1.0 - dot).max(0.0)
+}
+
+fn candidate_horizontal_sides(from: &NodeLayout, to: &NodeLayout) -> (EdgeSide, EdgeSide, bool) {
+    let from_c = node_center(from);
+    let to_c = node_center(to);
+    if to_c.0 >= from_c.0 {
+        (EdgeSide::Right, EdgeSide::Left, to.x + to.width < from.x)
+    } else {
+        (EdgeSide::Left, EdgeSide::Right, to.x > from.x + from.width)
+    }
+}
+
+fn candidate_vertical_sides(from: &NodeLayout, to: &NodeLayout) -> (EdgeSide, EdgeSide, bool) {
+    let from_c = node_center(from);
+    let to_c = node_center(to);
+    if to_c.1 >= from_c.1 {
+        (EdgeSide::Bottom, EdgeSide::Top, to.y + to.height < from.y)
+    } else {
+        (EdgeSide::Top, EdgeSide::Bottom, to.y > from.y + from.height)
+    }
+}
+
+fn push_unique_side_candidate(
+    candidates: &mut Vec<(EdgeSide, EdgeSide, bool)>,
+    candidate: (EdgeSide, EdgeSide, bool),
+) {
+    if !candidates
+        .iter()
+        .any(|(start, end, _)| *start == candidate.0 && *end == candidate.1)
+    {
+        candidates.push(candidate);
+    }
+}
+
+fn routed_side_candidate_score(
+    from_id: &str,
+    to_id: &str,
+    from: &NodeLayout,
+    to: &NodeLayout,
+    candidate: (EdgeSide, EdgeSide, bool),
+    primary: (EdgeSide, EdgeSide, bool),
+    edge_role: roles::FlowchartEdgeRole,
+    graph_direction: crate::ir::Direction,
+    node_degrees: &HashMap<String, usize>,
+    side_loads: &HashMap<String, [usize; 4]>,
+    obstacles: &[Obstacle],
+    label_obstacles: &[Obstacle],
+    routing_grid: Option<&RoutingGrid>,
+    existing_segments: &[Segment],
+    config: &LayoutConfig,
+    tiny_graph: bool,
+) -> f32 {
+    let route_ctx = RouteContext {
+        from_id,
+        to_id,
+        from,
+        to,
+        direction: graph_direction,
+        config,
+        obstacles,
+        label_obstacles,
+        fast_route: tiny_graph,
+        base_offset: 0.0,
+        start_side: candidate.0,
+        end_side: candidate.1,
+        start_offset: 0.0,
+        end_offset: 0.0,
+        stub_len: port_stub_length(config, from, to),
+        start_inset: 0.0,
+        end_inset: 0.0,
+        prefer_shorter_ties: true,
+        preferred_label_id: None,
+        preferred_label_center: None,
+        preferred_label_obstacle: None,
+        preferred_label_clearance: 0.0,
+        force_preferred_label_via: false,
+        coarse_grid_retry: true,
+    };
+    let existing = (!existing_segments.is_empty()).then_some(existing_segments);
+    let points = route_edge_with_avoidance(&route_ctx, None, routing_grid, existing);
+    let hard_hits = path_obstacle_intersections(&points, obstacles, from_id, to_id) as f32;
+    let label_hits = path_label_intersections(&points, label_obstacles, None) as f32;
+    let (crossings, overlap) = if existing_segments.is_empty() {
+        (0usize, 0.0)
+    } else {
+        edge_crossings_with_existing(&points, existing_segments)
+    };
+    let bends = path_bend_count(&points) as f32;
+    let len = path_length(&points);
+    let from_load = side_load_for_node(side_loads, from_id, candidate.0) as f32;
+    let to_load = side_load_for_node(side_loads, to_id, candidate.1) as f32;
+    let congestion = from_load * from_load + to_load * to_load + (from_load + to_load) * 0.5;
+    let from_degree = node_degrees.get(from_id).copied().unwrap_or(0);
+    let to_degree = node_degrees.get(to_id).copied().unwrap_or(0);
+    let low_degree_edge = from_degree <= 4 && to_degree <= 4;
+    let primary_deviation = if candidate.0 == primary.0 && candidate.1 == primary.1 {
+        0.0
+    } else if low_degree_edge {
+        24.0
+    } else {
+        8.0
+    };
+    let alignment = side_alignment_penalty(candidate.0, from, to)
+        + side_alignment_penalty(candidate.1, to, from);
+    let backward_penalty = if candidate.2 && !primary.2 { 8.0 } else { 0.0 };
+    let back_edge_outer_bonus = if edge_role.is_back_edge
+        && candidate.0 == candidate.1
+        && edge_axis_is_horizontal(candidate.0) != edge_axis_is_horizontal(primary.0)
+    {
+        -10.0
+    } else {
+        0.0
+    };
+
+    hard_hits * 100_000.0
+        + label_hits * 20_000.0
+        + crossings as f32 * 1_600.0
+        + overlap * 70.0
+        + bends * 42.0
+        + len * 0.09
+        + congestion * 5.5
+        + alignment * 34.0
+        + primary_deviation
+        + backward_penalty
+        + back_edge_outer_bonus
+}
+
+fn choose_routed_flowchart_sides(
+    from_id: &str,
+    to_id: &str,
+    from: &NodeLayout,
+    to: &NodeLayout,
+    primary: (EdgeSide, EdgeSide, bool),
+    balanced: (EdgeSide, EdgeSide, bool),
+    edge_role: roles::FlowchartEdgeRole,
+    graph_direction: crate::ir::Direction,
+    content_bounds: Option<NodeBounds>,
+    node_degrees: &HashMap<String, usize>,
+    side_loads: &HashMap<String, [usize; 4]>,
+    obstacles: &[Obstacle],
+    label_obstacles: &[Obstacle],
+    routing_grid: Option<&RoutingGrid>,
+    existing_segments: &[Segment],
+    config: &LayoutConfig,
+    tiny_graph: bool,
+) -> (EdgeSide, EdgeSide, bool) {
+    let mut candidates = Vec::with_capacity(5);
+    push_unique_side_candidate(&mut candidates, primary);
+    push_unique_side_candidate(&mut candidates, balanced);
+    push_unique_side_candidate(&mut candidates, candidate_horizontal_sides(from, to));
+    push_unique_side_candidate(&mut candidates, candidate_vertical_sides(from, to));
+    if edge_role.is_back_edge {
+        push_unique_side_candidate(
+            &mut candidates,
+            choose_outer_back_edge_sides(from, to, graph_direction, content_bounds, balanced),
+        );
+    }
+
+    let mut best = primary;
+    let mut best_score = f32::INFINITY;
+    for candidate in candidates {
+        let score = routed_side_candidate_score(
+            from_id,
+            to_id,
+            from,
+            to,
+            candidate,
+            primary,
+            edge_role,
+            graph_direction,
+            node_degrees,
+            side_loads,
+            obstacles,
+            label_obstacles,
+            routing_grid,
+            existing_segments,
+            config,
+            tiny_graph,
+        );
+        if score < best_score {
+            best_score = score;
+            best = candidate;
+        }
+    }
+    best
+}
+
 pub(in crate::layout) struct RoutedEdgeBuildContext<'a> {
     pub(in crate::layout) graph: &'a Graph,
     pub(in crate::layout) nodes: &'a BTreeMap<String, NodeLayout>,
@@ -331,18 +543,43 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
                 || edge_role.is_back_edge
                 || edge_role.crosses_subgraph_boundary);
         let primary_sides = edge_sides(from, to, graph.direction);
-        let mut selected_sides = if use_balanced_sides {
-            let balanced = edge_sides_balanced(
+        let balanced = edge_sides_balanced(
+            &edge.from,
+            &edge.to,
+            from,
+            to,
+            allow_low_degree_balancing,
+            edge_role.is_back_edge,
+            graph.direction,
+            &node_degrees,
+            &side_loads,
+        );
+        let use_routed_side_search = graph.kind == DiagramKind::Flowchart
+            && use_balanced_sides
+            && edge.from != edge.to
+            && graph.subgraphs.is_empty()
+            && graph.edges.len() <= 32;
+        let mut selected_sides = if use_routed_side_search {
+            choose_routed_flowchart_sides(
                 &edge.from,
                 &edge.to,
                 from,
                 to,
-                allow_low_degree_balancing,
-                edge_role.is_back_edge,
+                primary_sides,
+                balanced,
+                edge_role,
                 graph.direction,
+                content_bounds,
                 &node_degrees,
                 &side_loads,
-            );
+                &obstacles,
+                &label_obstacles,
+                routing_grid.as_ref(),
+                &side_choice_segments,
+                config,
+                tiny_graph,
+            )
+        } else if use_balanced_sides {
             if edge_role.is_back_edge {
                 choose_outer_back_edge_sides(from, to, graph.direction, content_bounds, balanced)
             } else {

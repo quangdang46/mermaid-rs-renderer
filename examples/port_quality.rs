@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use mermaid_rs_renderer::layout::{EdgeLayout, NodeLayout};
-use mermaid_rs_renderer::{DiagramKind, LayoutConfig, Theme, compute_layout, parse_mermaid};
+use mermaid_rs_renderer::{
+    DiagramKind, LayoutConfig, NodeShape, Theme, compute_layout, parse_mermaid,
+};
 
 #[derive(Default)]
 struct Totals {
@@ -11,6 +13,7 @@ struct Totals {
     bad_source_exits: usize,
     bad_target_entries: usize,
     endpoint_node_intrusions: usize,
+    endpoint_node_reentries: usize,
     non_endpoint_node_hits: usize,
     bends: usize,
     path_len: f32,
@@ -97,10 +100,30 @@ fn segment_intrudes_endpoint_rect(
 
 fn rect_contains_strict(node: &NodeLayout, p: (f32, f32)) -> bool {
     let eps = 0.5;
-    p.0 > node.x + eps
-        && p.0 < node.x + node.width - eps
-        && p.1 > node.y + eps
-        && p.1 < node.y + node.height - eps
+    match node.shape {
+        NodeShape::Diamond => {
+            let cx = node.x + node.width * 0.5;
+            let cy = node.y + node.height * 0.5;
+            let rx = (node.width * 0.5 - eps).max(1.0);
+            let ry = (node.height * 0.5 - eps).max(1.0);
+            (p.0 - cx).abs() / rx + (p.1 - cy).abs() / ry < 1.0
+        }
+        NodeShape::Circle | NodeShape::DoubleCircle => {
+            let cx = node.x + node.width * 0.5;
+            let cy = node.y + node.height * 0.5;
+            let rx = (node.width * 0.5 - eps).max(1.0);
+            let ry = (node.height * 0.5 - eps).max(1.0);
+            let nx = (p.0 - cx) / rx;
+            let ny = (p.1 - cy) / ry;
+            nx * nx + ny * ny < 1.0
+        }
+        _ => {
+            p.0 > node.x + eps
+                && p.0 < node.x + node.width - eps
+                && p.1 > node.y + eps
+                && p.1 < node.y + node.height - eps
+        }
+    }
 }
 
 fn segment_hits_rect_interior(a: (f32, f32), b: (f32, f32), node: &NodeLayout) -> bool {
@@ -109,6 +132,25 @@ fn segment_hits_rect_interior(a: (f32, f32), b: (f32, f32), node: &NodeLayout) -
         let t = i as f32 / steps as f32;
         rect_contains_strict(node, (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t))
     })
+}
+
+fn endpoint_reentry_count(points: &[(f32, f32)], node: &NodeLayout, is_source: bool) -> usize {
+    if points.len() < 3 {
+        return 0;
+    }
+    let last_segment_idx = points.len().saturating_sub(2);
+    points
+        .windows(2)
+        .enumerate()
+        .filter(|(idx, segment)| {
+            let allowed_endpoint_stub = if is_source {
+                *idx == 0
+            } else {
+                *idx == last_segment_idx
+            };
+            !allowed_endpoint_stub && segment_hits_rect_interior(segment[0], segment[1], node)
+        })
+        .count()
 }
 
 fn path_len(points: &[(f32, f32)]) -> f32 {
@@ -130,9 +172,12 @@ fn bend_count(points: &[(f32, f32)]) -> usize {
 }
 
 fn score_edge(
+    file: &Path,
+    edge_idx: usize,
     edge: &EdgeLayout,
     layout_nodes: &std::collections::BTreeMap<String, NodeLayout>,
     totals: &mut Totals,
+    verbose: bool,
 ) {
     if edge.points.len() < 2 {
         return;
@@ -153,15 +198,48 @@ fn score_edge(
     totals.edges += 1;
     if !source_exits_outward(start_side, start, next) {
         totals.bad_source_exits += 1;
+        if verbose {
+            eprintln!(
+                "{} edge#{edge_idx} {}->{} bad source exit {:?}",
+                file.display(),
+                edge.from,
+                edge.to,
+                edge.points
+            );
+        }
     }
     if !target_enters_from_outside(end_side, prev, end) {
         totals.bad_target_entries += 1;
+        if verbose {
+            eprintln!(
+                "{} edge#{edge_idx} {}->{} bad target entry {:?}",
+                file.display(),
+                edge.from,
+                edge.to,
+                edge.points
+            );
+        }
     }
     if segment_intrudes_endpoint_rect(start_side, next, start, from) {
         totals.endpoint_node_intrusions += 1;
     }
     if segment_intrudes_endpoint_rect(end_side, prev, end, to) {
         totals.endpoint_node_intrusions += 1;
+    }
+    let source_reentries = endpoint_reentry_count(&edge.points, from, true);
+    let target_reentries = endpoint_reentry_count(&edge.points, to, false);
+    totals.endpoint_node_reentries += source_reentries;
+    totals.endpoint_node_reentries += target_reentries;
+    if verbose && source_reentries + target_reentries > 0 {
+        eprintln!(
+            "{} edge#{edge_idx} {}->{} endpoint reentries source={} target={} {:?}",
+            file.display(),
+            edge.from,
+            edge.to,
+            source_reentries,
+            target_reentries,
+            edge.points
+        );
     }
 
     for (id, node) in layout_nodes {
@@ -174,6 +252,16 @@ fn score_edge(
             .any(|w| segment_hits_rect_interior(w[0], w[1], node))
         {
             totals.non_endpoint_node_hits += 1;
+            if verbose {
+                eprintln!(
+                    "{} edge#{edge_idx} {}->{} hits non-endpoint node {} {:?}",
+                    file.display(),
+                    edge.from,
+                    edge.to,
+                    id,
+                    edge.points
+                );
+            }
         }
     }
 
@@ -195,6 +283,7 @@ fn main() -> anyhow::Result<()> {
     let theme = Theme::modern();
     let config = LayoutConfig::default();
     let mut totals = Totals::default();
+    let verbose = std::env::var_os("PORT_QUALITY_VERBOSE").is_some();
 
     for file in files {
         totals.files += 1;
@@ -208,8 +297,8 @@ fn main() -> anyhow::Result<()> {
         }
         totals.flowcharts += 1;
         let layout = compute_layout(&parsed.graph, &theme, &config);
-        for edge in &layout.edges {
-            score_edge(edge, &layout.nodes, &mut totals);
+        for (edge_idx, edge) in layout.edges.iter().enumerate() {
+            score_edge(&file, edge_idx, edge, &layout.nodes, &mut totals, verbose);
         }
     }
 
@@ -232,6 +321,11 @@ fn main() -> anyhow::Result<()> {
         "endpoint_node_intrusions={} ({:.2}% of endpoints)",
         totals.endpoint_node_intrusions,
         totals.endpoint_node_intrusions as f32 * 50.0 / edges
+    );
+    println!(
+        "endpoint_node_reentries={} ({:.2}% per edge)",
+        totals.endpoint_node_reentries,
+        totals.endpoint_node_reentries as f32 * 100.0 / edges
     );
     println!(
         "non_endpoint_node_hits={} ({:.2}% per edge)",
