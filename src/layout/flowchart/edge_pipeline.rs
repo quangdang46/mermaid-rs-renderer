@@ -427,17 +427,9 @@ fn endpoint_score_repairs_baseline(
 }
 
 fn repair_flowchart_endpoint_reentries_by_rerouting(
-    graph: &Graph,
-    nodes: &BTreeMap<String, NodeLayout>,
-    subgraphs: &[SubgraphLayout],
-    obstacles: &[Obstacle],
-    label_obstacles: &[Obstacle],
-    routing_grid: Option<&RoutingGrid>,
+    ctx: EndpointRerouteRepairContext<'_>,
     edge_ports: &mut [EdgePortInfo],
-    lane_offsets: &[f32],
     routed_points: &mut [Vec<(f32, f32)>],
-    reserved_channels: &[ReservedRoutingChannel],
-    config: &LayoutConfig,
 ) {
     const SIDES: [EdgeSide; 4] = [
         EdgeSide::Left,
@@ -446,7 +438,7 @@ fn repair_flowchart_endpoint_reentries_by_rerouting(
         EdgeSide::Bottom,
     ];
     for idx in 0..routed_points.len() {
-        let Some(edge) = graph.edges.get(idx) else {
+        let Some(edge) = ctx.graph.edges.get(idx) else {
             continue;
         };
         if edge.from == edge.to || routed_points[idx].len() < 2 {
@@ -454,12 +446,13 @@ fn repair_flowchart_endpoint_reentries_by_rerouting(
         }
         let other_segments = collect_other_flowchart_segments(routed_points, idx);
         let baseline_score =
-            endpoint_repair_score(&routed_points[idx], edge, nodes, &other_segments);
+            endpoint_repair_score(&routed_points[idx], edge, ctx.nodes, &other_segments);
         if baseline_score.hard == 0 && baseline_score.endpoint_reentries == 0 {
             continue;
         }
 
-        let Some((from, to)) = effective_edge_endpoint_layouts(graph, nodes, subgraphs, edge)
+        let Some((from, to)) =
+            effective_edge_endpoint_layouts(ctx.graph, ctx.nodes, ctx.subgraphs, edge)
         else {
             continue;
         };
@@ -469,7 +462,7 @@ fn repair_flowchart_endpoint_reentries_by_rerouting(
             start_offset: 0.0,
             end_offset: 0.0,
         });
-        let stub_len = port_stub_length(config, &from, &to);
+        let stub_len = port_stub_length(ctx.config, &from, &to);
         let mut best_score = baseline_score;
         let mut best_points: Option<Vec<(f32, f32)>> = None;
         let mut best_port = current_port;
@@ -495,24 +488,24 @@ fn repair_flowchart_endpoint_reentries_by_rerouting(
                     to_id: &edge.to,
                     from: &from,
                     to: &to,
-                    direction: graph.direction,
-                    config,
-                    obstacles,
-                    label_obstacles,
+                    direction: ctx.graph.direction,
+                    config: ctx.config,
+                    obstacles: ctx.obstacles,
+                    label_obstacles: ctx.label_obstacles,
                     fast_route: false,
-                    base_offset: lane_offsets.get(idx).copied().unwrap_or_default(),
+                    base_offset: ctx.lane_offsets.get(idx).copied().unwrap_or_default(),
                     start_side: candidate_port.start_side,
                     end_side: candidate_port.end_side,
                     start_offset: candidate_port.start_offset,
                     end_offset: candidate_port.end_offset,
                     stub_len,
                     start_inset: if edge.arrow_start {
-                        crate::edge_geometry::arrowhead_inset(graph.kind, edge.arrow_start_kind)
+                        crate::edge_geometry::arrowhead_inset(ctx.graph.kind, edge.arrow_start_kind)
                     } else {
                         0.0
                     },
                     end_inset: if edge.arrow_end {
-                        crate::edge_geometry::arrowhead_inset(graph.kind, edge.arrow_end_kind)
+                        crate::edge_geometry::arrowhead_inset(ctx.graph.kind, edge.arrow_end_kind)
                     } else {
                         0.0
                     },
@@ -521,7 +514,7 @@ fn repair_flowchart_endpoint_reentries_by_rerouting(
                     preferred_label_center: None,
                     preferred_label_obstacle: None,
                     preferred_label_clearance: 0.0,
-                    reserved_channels,
+                    reserved_channels: ctx.reserved_channels,
                     force_preferred_label_via: false,
                     coarse_grid_retry: true,
                     allow_exterior_fallback: false,
@@ -529,14 +522,14 @@ fn repair_flowchart_endpoint_reentries_by_rerouting(
                 let candidate = route_edge_with_avoidance(
                     &route_ctx,
                     None,
-                    routing_grid,
+                    ctx.routing_grid,
                     Some(other_segments.as_slice()),
                 );
-                let score = endpoint_repair_score(&candidate, edge, nodes, &other_segments);
+                let score = endpoint_repair_score(&candidate, edge, ctx.nodes, &other_segments);
                 if !endpoint_score_repairs_baseline(score, baseline_score) {
                     continue;
                 }
-                if score.len > baseline_score.len * 4.0 + config.node_spacing * 4.0 {
+                if score.len > baseline_score.len * 4.0 + ctx.config.node_spacing * 4.0 {
                     continue;
                 }
                 if score_is_better(score, best_score) {
@@ -659,6 +652,59 @@ struct RoutedSideSearchProfile {
     use_existing_segments: bool,
 }
 
+#[derive(Clone, Copy)]
+struct RoutedSideChoiceContext<'a> {
+    graph_direction: crate::ir::Direction,
+    content_bounds: Option<NodeBounds>,
+    node_degrees: &'a HashMap<String, usize>,
+    side_loads: &'a HashMap<String, [usize; 4]>,
+    obstacles: &'a [Obstacle],
+    label_obstacles: &'a [Obstacle],
+    routing_grid: Option<&'a RoutingGrid>,
+    existing_segments: &'a [Segment],
+    config: &'a LayoutConfig,
+    profile: RoutedSideSearchProfile,
+}
+
+struct PortRouteCandidateContext<'a> {
+    graph: &'a Graph,
+    edge: &'a crate::ir::Edge,
+    from: &'a NodeLayout,
+    to: &'a NodeLayout,
+    obstacles: &'a [Obstacle],
+    label_obstacles: &'a [Obstacle],
+    routing_grid: Option<&'a RoutingGrid>,
+    config: &'a LayoutConfig,
+    profile: RoutedSideSearchProfile,
+}
+
+struct PortRefinementContext<'a> {
+    graph: &'a Graph,
+    nodes: &'a BTreeMap<String, NodeLayout>,
+    subgraphs: &'a [SubgraphLayout],
+    obstacles: &'a [Obstacle],
+    label_obstacles: &'a [Obstacle],
+    routing_grid: Option<&'a RoutingGrid>,
+    edge_roles: &'a [roles::FlowchartEdgeRole],
+    content_bounds: Option<NodeBounds>,
+    node_degrees: &'a HashMap<String, usize>,
+    side_loads: &'a HashMap<String, [usize; 4]>,
+    config: &'a LayoutConfig,
+    profile: RoutedSideSearchProfile,
+}
+
+struct EndpointRerouteRepairContext<'a> {
+    graph: &'a Graph,
+    nodes: &'a BTreeMap<String, NodeLayout>,
+    subgraphs: &'a [SubgraphLayout],
+    obstacles: &'a [Obstacle],
+    label_obstacles: &'a [Obstacle],
+    routing_grid: Option<&'a RoutingGrid>,
+    lane_offsets: &'a [f32],
+    reserved_channels: &'a [ReservedRoutingChannel],
+    config: &'a LayoutConfig,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FlowchartRoutingTier {
     Disabled,
@@ -755,9 +801,9 @@ fn flowchart_routing_performance_profile(
     };
 
     let global_route_passes = match tier {
-        FlowchartRoutingTier::Exact if edge_count >= 3 && edge_count <= 48 => 2,
+        FlowchartRoutingTier::Exact if (3..=48).contains(&edge_count) => 2,
         FlowchartRoutingTier::Exact if edge_count >= 3 => 1,
-        FlowchartRoutingTier::Bounded if edge_count >= 3 && edge_count <= 128 => 1,
+        FlowchartRoutingTier::Bounded if (3..=128).contains(&edge_count) => 1,
         _ => 0,
     };
 
@@ -869,32 +915,24 @@ fn routed_side_candidate_score(
     candidate: (EdgeSide, EdgeSide, bool),
     primary: (EdgeSide, EdgeSide, bool),
     edge_role: roles::FlowchartEdgeRole,
-    graph_direction: crate::ir::Direction,
-    node_degrees: &HashMap<String, usize>,
-    side_loads: &HashMap<String, [usize; 4]>,
-    obstacles: &[Obstacle],
-    label_obstacles: &[Obstacle],
-    routing_grid: Option<&RoutingGrid>,
-    existing_segments: &[Segment],
-    config: &LayoutConfig,
-    profile: RoutedSideSearchProfile,
+    ctx: &RoutedSideChoiceContext<'_>,
 ) -> f32 {
     let route_ctx = RouteContext {
         from_id,
         to_id,
         from,
         to,
-        direction: graph_direction,
-        config,
-        obstacles,
-        label_obstacles,
-        fast_route: profile.fast_route,
+        direction: ctx.graph_direction,
+        config: ctx.config,
+        obstacles: ctx.obstacles,
+        label_obstacles: ctx.label_obstacles,
+        fast_route: ctx.profile.fast_route,
         base_offset: 0.0,
         start_side: candidate.0,
         end_side: candidate.1,
         start_offset: 0.0,
         end_offset: 0.0,
-        stub_len: port_stub_length(config, from, to),
+        stub_len: port_stub_length(ctx.config, from, to),
         start_inset: 0.0,
         end_inset: 0.0,
         prefer_shorter_ties: true,
@@ -907,23 +945,23 @@ fn routed_side_candidate_score(
         coarse_grid_retry: true,
         allow_exterior_fallback: false,
     };
-    let existing = (!existing_segments.is_empty()).then_some(existing_segments);
-    let grid = profile.use_grid.then_some(routing_grid).flatten();
+    let existing = (!ctx.existing_segments.is_empty()).then_some(ctx.existing_segments);
+    let grid = ctx.profile.use_grid.then_some(ctx.routing_grid).flatten();
     let points = route_edge_with_avoidance(&route_ctx, None, grid, existing);
-    let hard_hits = path_obstacle_intersections(&points, obstacles, from_id, to_id) as f32;
-    let label_hits = path_label_intersections(&points, label_obstacles, None) as f32;
-    let (crossings, overlap) = if existing_segments.is_empty() {
+    let hard_hits = path_obstacle_intersections(&points, ctx.obstacles, from_id, to_id) as f32;
+    let label_hits = path_label_intersections(&points, ctx.label_obstacles, None) as f32;
+    let (crossings, overlap) = if ctx.existing_segments.is_empty() {
         (0usize, 0.0)
     } else {
-        edge_crossings_with_existing(&points, existing_segments)
+        edge_crossings_with_existing(&points, ctx.existing_segments)
     };
     let bends = path_bend_count(&points) as f32;
     let len = path_length(&points);
-    let from_load = side_load_for_node(side_loads, from_id, candidate.0) as f32;
-    let to_load = side_load_for_node(side_loads, to_id, candidate.1) as f32;
+    let from_load = side_load_for_node(ctx.side_loads, from_id, candidate.0) as f32;
+    let to_load = side_load_for_node(ctx.side_loads, to_id, candidate.1) as f32;
     let congestion = from_load * from_load + to_load * to_load + (from_load + to_load) * 0.5;
-    let from_degree = node_degrees.get(from_id).copied().unwrap_or(0);
-    let to_degree = node_degrees.get(to_id).copied().unwrap_or(0);
+    let from_degree = ctx.node_degrees.get(from_id).copied().unwrap_or(0);
+    let to_degree = ctx.node_degrees.get(to_id).copied().unwrap_or(0);
     let low_degree_edge = from_degree <= 4 && to_degree <= 4;
     let primary_deviation = if candidate.0 == primary.0 && candidate.1 == primary.1 {
         0.0
@@ -965,16 +1003,7 @@ fn choose_routed_flowchart_sides(
     primary: (EdgeSide, EdgeSide, bool),
     balanced: (EdgeSide, EdgeSide, bool),
     edge_role: roles::FlowchartEdgeRole,
-    graph_direction: crate::ir::Direction,
-    content_bounds: Option<NodeBounds>,
-    node_degrees: &HashMap<String, usize>,
-    side_loads: &HashMap<String, [usize; 4]>,
-    obstacles: &[Obstacle],
-    label_obstacles: &[Obstacle],
-    routing_grid: Option<&RoutingGrid>,
-    existing_segments: &[Segment],
-    config: &LayoutConfig,
-    profile: RoutedSideSearchProfile,
+    ctx: &RoutedSideChoiceContext<'_>,
 ) -> (EdgeSide, EdgeSide, bool) {
     let candidates = collect_routed_side_candidates(
         from,
@@ -982,15 +1011,19 @@ fn choose_routed_flowchart_sides(
         primary,
         balanced,
         edge_role,
-        graph_direction,
-        content_bounds,
-        profile.max_candidates,
+        ctx.graph_direction,
+        ctx.content_bounds,
+        ctx.profile.max_candidates,
     );
 
-    let scored_existing_segments = if profile.use_existing_segments {
-        existing_segments
+    let scored_existing_segments = if ctx.profile.use_existing_segments {
+        ctx.existing_segments
     } else {
         &[]
+    };
+    let scoring_ctx = RoutedSideChoiceContext {
+        existing_segments: scored_existing_segments,
+        ..*ctx
     };
     let mut best = primary;
     let mut best_score = f32::INFINITY;
@@ -1003,15 +1036,7 @@ fn choose_routed_flowchart_sides(
             candidate,
             primary,
             edge_role,
-            graph_direction,
-            node_degrees,
-            side_loads,
-            obstacles,
-            label_obstacles,
-            routing_grid,
-            scored_existing_segments,
-            config,
-            profile,
+            &scoring_ctx,
         );
         if score < best_score {
             best_score = score;
@@ -1179,43 +1204,34 @@ fn port_refinement_offset_limit(_graph: &Graph, profile: RoutedSideSearchProfile
 }
 
 fn route_points_for_port_candidate(
-    graph: &Graph,
-    edge: &crate::ir::Edge,
-    from: &NodeLayout,
-    to: &NodeLayout,
+    ctx: &PortRouteCandidateContext<'_>,
     port: EdgePortInfo,
     base_offset: f32,
-    obstacles: &[Obstacle],
-    label_obstacles: &[Obstacle],
-    routing_grid: Option<&RoutingGrid>,
-    existing_segments: &[Segment],
-    config: &LayoutConfig,
-    profile: RoutedSideSearchProfile,
 ) -> Vec<(f32, f32)> {
-    let stub_len = port_stub_length(config, from, to);
+    let stub_len = port_stub_length(ctx.config, ctx.from, ctx.to);
     let route_ctx = RouteContext {
-        from_id: &edge.from,
-        to_id: &edge.to,
-        from,
-        to,
-        direction: graph.direction,
-        config,
-        obstacles,
-        label_obstacles,
-        fast_route: profile.fast_route,
+        from_id: &ctx.edge.from,
+        to_id: &ctx.edge.to,
+        from: ctx.from,
+        to: ctx.to,
+        direction: ctx.graph.direction,
+        config: ctx.config,
+        obstacles: ctx.obstacles,
+        label_obstacles: ctx.label_obstacles,
+        fast_route: ctx.profile.fast_route,
         base_offset,
         start_side: port.start_side,
         end_side: port.end_side,
         start_offset: port.start_offset,
         end_offset: port.end_offset,
         stub_len,
-        start_inset: if edge.arrow_start {
-            crate::edge_geometry::arrowhead_inset(graph.kind, edge.arrow_start_kind)
+        start_inset: if ctx.edge.arrow_start {
+            crate::edge_geometry::arrowhead_inset(ctx.graph.kind, ctx.edge.arrow_start_kind)
         } else {
             0.0
         },
-        end_inset: if edge.arrow_end {
-            crate::edge_geometry::arrowhead_inset(graph.kind, edge.arrow_end_kind)
+        end_inset: if ctx.edge.arrow_end {
+            crate::edge_geometry::arrowhead_inset(ctx.graph.kind, ctx.edge.arrow_end_kind)
         } else {
             0.0
         },
@@ -1229,13 +1245,12 @@ fn route_points_for_port_candidate(
         coarse_grid_retry: true,
         allow_exterior_fallback: false,
     };
-    let grid = profile.use_grid.then_some(routing_grid).flatten();
+    let grid = ctx.profile.use_grid.then_some(ctx.routing_grid).flatten();
     // For full port refinement, generate the candidate's natural path first and
     // score crossings/overlap against provisional segments afterward. Feeding the
     // provisional segments into the router here makes straight backbone edges bend
     // just to avoid a preview-only conflict, which then defeats later straight-line
     // cleanup and produces visibly worse ports.
-    let _ = existing_segments;
     route_edge_with_avoidance(&route_ctx, None, grid, None)
 }
 
@@ -1362,30 +1377,21 @@ fn score_port_route_candidate(
 }
 
 fn refine_flowchart_ports_with_route_candidates(
-    graph: &Graph,
-    nodes: &BTreeMap<String, NodeLayout>,
-    subgraphs: &[SubgraphLayout],
-    obstacles: &[Obstacle],
-    label_obstacles: &[Obstacle],
-    routing_grid: Option<&RoutingGrid>,
-    edge_roles: &[roles::FlowchartEdgeRole],
-    content_bounds: Option<NodeBounds>,
-    node_degrees: &HashMap<String, usize>,
-    side_loads: &HashMap<String, [usize; 4]>,
+    ctx: PortRefinementContext<'_>,
     edge_ports: &mut [EdgePortInfo],
-    config: &LayoutConfig,
-    profile: RoutedSideSearchProfile,
 ) {
-    let offset_limit = port_refinement_offset_limit(graph, profile);
-    let predicted_lane_assignments = plan::plan_edge_lanes(graph, nodes, subgraphs, config);
+    let offset_limit = port_refinement_offset_limit(ctx.graph, ctx.profile);
+    let predicted_lane_assignments =
+        plan::plan_edge_lanes(ctx.graph, ctx.nodes, ctx.subgraphs, ctx.config);
     let predicted_lane_offsets =
-        predicted_lane_assignments.effective_offsets(edge_ports, graph.kind, config);
+        predicted_lane_assignments.effective_offsets(edge_ports, ctx.graph.kind, ctx.config);
     let mut refined_edges = 0usize;
-    for (idx, edge) in graph.edges.iter().enumerate() {
+    for (idx, edge) in ctx.graph.edges.iter().enumerate() {
         if edge.from == edge.to {
             continue;
         }
-        if profile
+        if ctx
+            .profile
             .max_refined_edges
             .is_some_and(|limit| refined_edges >= limit)
         {
@@ -1394,15 +1400,16 @@ fn refine_flowchart_ports_with_route_candidates(
         let Some(current) = edge_ports.get(idx).copied() else {
             continue;
         };
-        let Some((from, to)) = effective_edge_endpoint_layouts(graph, nodes, subgraphs, edge)
+        let Some((from, to)) =
+            effective_edge_endpoint_layouts(ctx.graph, ctx.nodes, ctx.subgraphs, edge)
         else {
             continue;
         };
         let base_offset = predicted_lane_offsets.get(idx).copied().unwrap_or_default();
-        let from_degree = node_degrees.get(&edge.from).copied().unwrap_or(0);
-        let to_degree = node_degrees.get(&edge.to).copied().unwrap_or(0);
-        let edge_role = edge_roles.get(idx).copied().unwrap_or_default();
-        let primary = edge_sides(&from, &to, graph.direction);
+        let from_degree = ctx.node_degrees.get(&edge.from).copied().unwrap_or(0);
+        let to_degree = ctx.node_degrees.get(&edge.to).copied().unwrap_or(0);
+        let edge_role = ctx.edge_roles.get(idx).copied().unwrap_or_default();
+        let primary = edge_sides(&from, &to, ctx.graph.direction);
         let balanced = edge_sides_balanced(
             &edge.from,
             &edge.to,
@@ -1410,9 +1417,9 @@ fn refine_flowchart_ports_with_route_candidates(
             &to,
             allow_low_degree_balancing_for_edge(edge, edge_role, from_degree, to_degree),
             edge_role.is_back_edge,
-            graph.direction,
-            node_degrees,
-            side_loads,
+            ctx.graph.direction,
+            ctx.node_degrees,
+            ctx.side_loads,
         );
         let side_candidates = collect_routed_side_candidates(
             &from,
@@ -1420,37 +1427,36 @@ fn refine_flowchart_ports_with_route_candidates(
             primary,
             balanced,
             edge_role,
-            graph.direction,
-            content_bounds,
-            profile.max_candidates,
+            ctx.graph.direction,
+            ctx.content_bounds,
+            ctx.profile.max_candidates,
         );
-        let existing_segments = if profile.use_existing_segments {
-            collect_port_choice_segments(graph, nodes, subgraphs, edge_ports, idx)
+        let existing_segments = if ctx.profile.use_existing_segments {
+            collect_port_choice_segments(ctx.graph, ctx.nodes, ctx.subgraphs, edge_ports, idx)
         } else {
             Vec::new()
         };
-        let baseline_points = route_points_for_port_candidate(
-            graph,
+        let route_candidate_ctx = PortRouteCandidateContext {
+            graph: ctx.graph,
             edge,
-            &from,
-            &to,
-            current,
-            base_offset,
-            obstacles,
-            label_obstacles,
-            routing_grid,
-            &existing_segments,
-            config,
-            profile,
-        );
+            from: &from,
+            to: &to,
+            obstacles: ctx.obstacles,
+            label_obstacles: ctx.label_obstacles,
+            routing_grid: ctx.routing_grid,
+            config: ctx.config,
+            profile: ctx.profile,
+        };
+        let baseline_points =
+            route_points_for_port_candidate(&route_candidate_ctx, current, base_offset);
         let baseline_collisions =
-            port_collision_count(graph, nodes, edge_ports, idx, current, config);
+            port_collision_count(ctx.graph, ctx.nodes, edge_ports, idx, current, ctx.config);
         let mut best_score = score_port_route_candidate(
             &baseline_points,
             edge,
-            nodes,
-            obstacles,
-            label_obstacles,
+            ctx.nodes,
+            ctx.obstacles,
+            ctx.label_obstacles,
             &existing_segments,
             current,
             current,
@@ -1476,7 +1482,7 @@ fn refine_flowchart_ports_with_route_candidates(
                 start_side,
                 start_current,
                 remote_to,
-                config,
+                ctx.config,
                 offset_limit,
             );
             let end_offsets = port_offset_candidates(
@@ -1484,7 +1490,7 @@ fn refine_flowchart_ports_with_route_candidates(
                 end_side,
                 end_current,
                 remote_from,
-                config,
+                ctx.config,
                 offset_limit,
             );
             for start_offset in &start_offsets {
@@ -1496,27 +1502,24 @@ fn refine_flowchart_ports_with_route_candidates(
                         end_offset: *end_offset,
                     };
                     let points = route_points_for_port_candidate(
-                        graph,
-                        edge,
-                        &from,
-                        &to,
+                        &route_candidate_ctx,
                         candidate_port,
                         base_offset,
-                        obstacles,
-                        label_obstacles,
-                        routing_grid,
-                        &existing_segments,
-                        config,
-                        profile,
                     );
-                    let collisions =
-                        port_collision_count(graph, nodes, edge_ports, idx, candidate_port, config);
+                    let collisions = port_collision_count(
+                        ctx.graph,
+                        ctx.nodes,
+                        edge_ports,
+                        idx,
+                        candidate_port,
+                        ctx.config,
+                    );
                     let score = score_port_route_candidate(
                         &points,
                         edge,
-                        nodes,
-                        obstacles,
-                        label_obstacles,
+                        ctx.nodes,
+                        ctx.obstacles,
+                        ctx.label_obstacles,
                         &existing_segments,
                         current,
                         candidate_port,
@@ -1531,7 +1534,7 @@ fn refine_flowchart_ports_with_route_candidates(
                     if score.endpoint_reentries > best_score.endpoint_reentries {
                         continue;
                     }
-                    if score.len > best_score.len * 3.0 + config.node_spacing * 4.0 {
+                    if score.len > best_score.len * 3.0 + ctx.config.node_spacing * 4.0 {
                         continue;
                     }
                     if port_route_score_is_better(score, best_score) {
@@ -1712,10 +1715,9 @@ fn congestion_improves_enough(
     if congestion_gain < 5 {
         return false;
     }
-    let has_visual_congestion_gain = candidate_score.crossings < baseline_score.crossings
+    candidate_score.crossings < baseline_score.crossings
         || candidate_score.overlap + 0.05 < baseline_score.overlap
-        || candidate_congestion.saturating_mul(2) < baseline_congestion;
-    has_visual_congestion_gain
+        || candidate_congestion.saturating_mul(2) < baseline_congestion
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2182,6 +2184,18 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
             && edge.from != edge.to
             && let Some(profile) = routed_side_search_profile
         {
+            let side_choice_ctx = RoutedSideChoiceContext {
+                graph_direction: graph.direction,
+                content_bounds,
+                node_degrees: &node_degrees,
+                side_loads: &side_loads,
+                obstacles: &obstacles,
+                label_obstacles: &label_obstacles,
+                routing_grid: routing_grid.as_ref(),
+                existing_segments: &side_choice_segments,
+                config,
+                profile,
+            };
             choose_routed_flowchart_sides(
                 &edge.from,
                 &edge.to,
@@ -2190,16 +2204,7 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
                 primary_sides,
                 balanced,
                 edge_role,
-                graph.direction,
-                content_bounds,
-                &node_degrees,
-                &side_loads,
-                &obstacles,
-                &label_obstacles,
-                routing_grid.as_ref(),
-                &side_choice_segments,
-                config,
-                profile,
+                &side_choice_ctx,
             )
         } else if use_balanced_sides {
             if edge_role.is_back_edge {
@@ -2417,19 +2422,21 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
     }
     if let Some(profile) = routed_side_search_profile {
         refine_flowchart_ports_with_route_candidates(
-            graph,
-            nodes,
-            subgraphs,
-            &obstacles,
-            &label_obstacles,
-            routing_grid.as_ref(),
-            &edge_roles,
-            content_bounds,
-            &node_degrees,
-            &side_loads,
+            PortRefinementContext {
+                graph,
+                nodes,
+                subgraphs,
+                obstacles: &obstacles,
+                label_obstacles: &label_obstacles,
+                routing_grid: routing_grid.as_ref(),
+                edge_roles: &edge_roles,
+                content_bounds,
+                node_degrees: &node_degrees,
+                side_loads: &side_loads,
+                config,
+                profile,
+            },
             &mut edge_ports,
-            config,
-            profile,
         );
     }
     #[cfg(debug_assertions)]
@@ -2864,17 +2871,19 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
         enforce_flowchart_endpoint_ports(graph, nodes, &edge_ports, &mut routed_points, config);
         path_cleanup::repair_flowchart_endpoint_reentries(graph, nodes, &mut routed_points, config);
         repair_flowchart_endpoint_reentries_by_rerouting(
-            graph,
-            nodes,
-            subgraphs,
-            &obstacles,
-            &route_label_obstacles,
-            routing_grid.as_ref(),
+            EndpointRerouteRepairContext {
+                graph,
+                nodes,
+                subgraphs,
+                obstacles: &obstacles,
+                label_obstacles: &route_label_obstacles,
+                routing_grid: routing_grid.as_ref(),
+                lane_offsets: &lane_offsets,
+                reserved_channels: &reserved_channels,
+                config,
+            },
             &mut edge_ports,
-            &lane_offsets,
             &mut routed_points,
-            &reserved_channels,
-            config,
         );
         path_cleanup::repair_flowchart_endpoint_reentries(graph, nodes, &mut routed_points, config);
     }

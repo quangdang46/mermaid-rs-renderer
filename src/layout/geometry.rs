@@ -446,7 +446,7 @@ fn point_near_segment(point: (f32, f32), a: (f32, f32), b: (f32, f32), eps: f32)
         return points_near(point, a);
     }
     let t = ((point.0 - a.0) * dx + (point.1 - a.1) * dy) / len2;
-    if t < -GEOM_EPS || t > 1.0 + GEOM_EPS {
+    if !(-GEOM_EPS..=1.0 + GEOM_EPS).contains(&t) {
         return false;
     }
     let clamped_t = t.clamp(0.0, 1.0);
