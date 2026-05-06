@@ -7,6 +7,7 @@ use crate::theme::Theme;
 
 use super::super::ranking::{compute_ranks_subset, order_rank_nodes, rank_edges_for_manual_layout};
 use super::super::{NodeLayout, TextBlock, is_horizontal};
+use super::analysis::FlowchartRelationshipAnalysis;
 
 const LABEL_RANK_FONT_SCALE: f32 = 0.5;
 const LABEL_RANK_MIN_GAP: f32 = 8.0;
@@ -127,6 +128,13 @@ pub(in crate::layout) fn assign_positions_manual(
     let edge_labels = edge_labels_vec;
     let rank_edges = rank_edges_for_manual_layout(graph, layout_node_ids, &layout_edges);
     let mut ranks = compute_ranks_subset(layout_node_ids, &rank_edges, &graph.node_order);
+    let _relationship_analysis = FlowchartRelationshipAnalysis::analyze(
+        graph,
+        layout_node_ids,
+        &layout_edges,
+        &edge_labels,
+        &ranks,
+    );
     if graph.kind == DiagramKind::Class {
         let mut hierarchy_nodes: HashSet<String> = HashSet::new();
         for edge in &layout_edges {
