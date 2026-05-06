@@ -219,46 +219,67 @@ fn collect_other_flowchart_segments(
     segments
 }
 
+#[derive(Debug, Clone, Copy)]
+struct EndpointRepairScore {
+    hard: usize,
+    endpoint_reentries: usize,
+    crossings: usize,
+    overlap: f32,
+    bends: usize,
+    len: f32,
+}
+
 fn endpoint_repair_score(
     points: &[(f32, f32)],
     edge: &crate::ir::Edge,
     nodes: &BTreeMap<String, NodeLayout>,
     other_segments: &[Segment],
-) -> Option<(usize, usize, usize, f32, usize, f32)> {
-    let hard = path_cleanup::flowchart_endpoint_direction_violation_count(points, edge, nodes);
-    if hard > 0 {
-        return None;
-    }
-    if path_cleanup::flowchart_path_hits_non_endpoint_nodes(points, &edge.from, &edge.to, nodes) {
-        return None;
-    }
+) -> EndpointRepairScore {
+    let endpoint_direction_violations =
+        path_cleanup::flowchart_endpoint_direction_violation_count(points, edge, nodes);
+    let non_endpoint_hits = usize::from(path_cleanup::flowchart_path_hits_non_endpoint_nodes(
+        points, &edge.from, &edge.to, nodes,
+    ));
     let debt = path_cleanup::flowchart_endpoint_reentry_count(points, edge, nodes);
     let (crossings, overlap) = edge_crossings_with_existing(points, other_segments);
     let bends = path_bend_count(points);
     let len = path_length(points);
-    Some((hard, debt, crossings, overlap, bends, len))
+    EndpointRepairScore {
+        hard: endpoint_direction_violations + non_endpoint_hits,
+        endpoint_reentries: debt,
+        crossings,
+        overlap,
+        bends,
+        len,
+    }
 }
 
-fn score_is_better(
-    candidate: (usize, usize, usize, f32, usize, f32),
-    best: (usize, usize, usize, f32, usize, f32),
+fn score_is_better(candidate: EndpointRepairScore, best: EndpointRepairScore) -> bool {
+    if candidate.hard != best.hard {
+        return candidate.hard < best.hard;
+    }
+    if candidate.endpoint_reentries != best.endpoint_reentries {
+        return candidate.endpoint_reentries < best.endpoint_reentries;
+    }
+    if candidate.crossings != best.crossings {
+        return candidate.crossings < best.crossings;
+    }
+    if (candidate.overlap - best.overlap).abs() > 0.05 {
+        return candidate.overlap < best.overlap;
+    }
+    if candidate.bends != best.bends {
+        return candidate.bends < best.bends;
+    }
+    candidate.len + 1.0 < best.len
+}
+
+fn endpoint_score_repairs_baseline(
+    candidate: EndpointRepairScore,
+    baseline: EndpointRepairScore,
 ) -> bool {
-    if candidate.0 != best.0 {
-        return candidate.0 < best.0;
-    }
-    if candidate.1 != best.1 {
-        return candidate.1 < best.1;
-    }
-    if candidate.2 != best.2 {
-        return candidate.2 < best.2;
-    }
-    if (candidate.3 - best.3).abs() > 0.05 {
-        return candidate.3 < best.3;
-    }
-    if candidate.4 != best.4 {
-        return candidate.4 < best.4;
-    }
-    candidate.5 + 1.0 < best.5
+    candidate.hard < baseline.hard
+        || (candidate.hard == baseline.hard
+            && candidate.endpoint_reentries < baseline.endpoint_reentries)
 }
 
 fn repair_flowchart_endpoint_reentries_by_rerouting(
@@ -287,12 +308,9 @@ fn repair_flowchart_endpoint_reentries_by_rerouting(
             continue;
         }
         let other_segments = collect_other_flowchart_segments(routed_points, idx);
-        let Some(baseline_score) =
-            endpoint_repair_score(&routed_points[idx], edge, nodes, &other_segments)
-        else {
-            continue;
-        };
-        if baseline_score.1 == 0 {
+        let baseline_score =
+            endpoint_repair_score(&routed_points[idx], edge, nodes, &other_segments);
+        if baseline_score.hard == 0 && baseline_score.endpoint_reentries == 0 {
             continue;
         }
 
@@ -379,14 +397,11 @@ fn repair_flowchart_endpoint_reentries_by_rerouting(
                     routing_grid,
                     Some(other_segments.as_slice()),
                 );
-                let Some(score) = endpoint_repair_score(&candidate, edge, nodes, &other_segments)
-                else {
-                    continue;
-                };
-                if score.1 >= baseline_score.1 {
+                let score = endpoint_repair_score(&candidate, edge, nodes, &other_segments);
+                if !endpoint_score_repairs_baseline(score, baseline_score) {
                     continue;
                 }
-                if score.5 > baseline_score.5 * 4.0 + config.node_spacing * 4.0 {
+                if score.len > baseline_score.len * 4.0 + config.node_spacing * 4.0 {
                     continue;
                 }
                 if score_is_better(score, best_score) {

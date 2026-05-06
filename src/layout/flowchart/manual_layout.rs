@@ -11,6 +11,81 @@ use super::analysis::FlowchartRelationshipAnalysis;
 
 const LABEL_RANK_FONT_SCALE: f32 = 0.5;
 const LABEL_RANK_MIN_GAP: f32 = 8.0;
+const EDGE_AWARE_CENTER_PULL_LIMIT_RATIO: f32 = 0.28;
+const EDGE_AWARE_CENTER_PULL_BLEND: f32 = 0.35;
+
+fn median_center(values: &mut [f32]) -> Option<f32> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+    let mid = values.len() / 2;
+    Some(if values.len() % 2 == 1 {
+        values[mid]
+    } else {
+        (values[mid - 1] + values[mid]) * 0.5
+    })
+}
+
+fn weighted_median_center(values: &mut [(f32, f32)]) -> Option<f32> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+    let total_weight = values
+        .iter()
+        .map(|(_, weight)| weight.max(0.0))
+        .sum::<f32>();
+    if total_weight <= f32::EPSILON {
+        return Some(values[values.len() / 2].0);
+    }
+    let threshold = total_weight * 0.5;
+    let mut cumulative = 0.0;
+    for idx in 0..values.len() {
+        let (center, weight) = values[idx];
+        cumulative += weight.max(0.0);
+        if (cumulative - threshold).abs() <= f32::EPSILON {
+            let next_center = values
+                .iter()
+                .skip(idx + 1)
+                .find(|(_, next_weight)| *next_weight > 0.0)
+                .map(|(next_center, _)| *next_center);
+            return Some(next_center.map_or(center, |next| (center + next) * 0.5));
+        }
+        if cumulative > threshold {
+            return Some(center);
+        }
+    }
+    values.last().map(|(center, _)| *center)
+}
+
+fn bounded_edge_aware_desired_center(
+    unweighted: f32,
+    weighted: Option<f32>,
+    current: f32,
+    node_spacing: f32,
+) -> f32 {
+    let Some(weighted) = weighted else {
+        return unweighted;
+    };
+    let max_pull = (node_spacing * EDGE_AWARE_CENTER_PULL_LIMIT_RATIO).max(4.0);
+    let bounded_pull = (weighted - unweighted).clamp(-max_pull, max_pull);
+    let relationship_target = unweighted + bounded_pull * EDGE_AWARE_CENTER_PULL_BLEND;
+    relationship_target * 0.85 + current * 0.15
+}
+
+fn node_cross_spacing_half(
+    node_id: &str,
+    visual_half: f32,
+    relationship_analysis: Option<&FlowchartRelationshipAnalysis>,
+    config: &LayoutConfig,
+) -> f32 {
+    visual_half
+        + relationship_analysis
+            .and_then(|analysis| analysis.node_relation(node_id))
+            .map(|relation| relation.extra_cross_padding(config))
+            .unwrap_or(0.0)
+}
 
 fn build_ordering_edges(
     layout_edges: &[crate::ir::Edge],
@@ -128,7 +203,7 @@ pub(in crate::layout) fn assign_positions_manual(
     let edge_labels = edge_labels_vec;
     let rank_edges = rank_edges_for_manual_layout(graph, layout_node_ids, &layout_edges);
     let mut ranks = compute_ranks_subset(layout_node_ids, &rank_edges, &graph.node_order);
-    let _relationship_analysis = FlowchartRelationshipAnalysis::analyze(
+    let relationship_analysis = FlowchartRelationshipAnalysis::analyze(
         graph,
         layout_node_ids,
         &layout_edges,
@@ -412,6 +487,8 @@ pub(in crate::layout) fn assign_positions_manual(
 
     let mut incoming: HashMap<String, Vec<String>> = HashMap::new();
     let mut outgoing: HashMap<String, Vec<String>> = HashMap::new();
+    let mut incoming_weighted: HashMap<String, Vec<(String, f32)>> = HashMap::new();
+    let mut outgoing_weighted: HashMap<String, Vec<(String, f32)>> = HashMap::new();
     for edge in &ordering_edges {
         incoming
             .entry(edge.to.clone())
@@ -421,6 +498,18 @@ pub(in crate::layout) fn assign_positions_manual(
             .entry(edge.from.clone())
             .or_default()
             .push(edge.to.clone());
+        let weight = relationship_analysis
+            .as_ref()
+            .map(|analysis| analysis.edge_weight_between(&edge.from, &edge.to))
+            .unwrap_or(1.0);
+        incoming_weighted
+            .entry(edge.to.clone())
+            .or_default()
+            .push((edge.from.clone(), weight));
+        outgoing_weighted
+            .entry(edge.from.clone())
+            .or_default()
+            .push((edge.to.clone(), weight));
     }
 
     let mut cross_pos: HashMap<String, f32> = HashMap::new();
@@ -437,6 +526,8 @@ pub(in crate::layout) fn assign_positions_manual(
         }
     }
 
+    let relationship_analysis_ref = relationship_analysis.as_ref();
+
     let mut place_rank = |rank_idx: usize,
                           use_incoming: bool,
                           nodes: &mut BTreeMap<String, NodeLayout>| {
@@ -445,12 +536,18 @@ pub(in crate::layout) fn assign_positions_manual(
             return;
         }
         let neighbors = if use_incoming { &incoming } else { &outgoing };
+        let weighted_neighbors = if use_incoming {
+            &incoming_weighted
+        } else {
+            &outgoing_weighted
+        };
         let mut entries: Vec<(String, f32, f32, usize)> = Vec::new();
         for (idx, node_id) in bucket.iter().enumerate() {
             let Some(node) = nodes.get(node_id) else {
                 continue;
             };
             let mut neighbor_centers: Vec<f32> = Vec::new();
+            let mut weighted_neighbor_centers: Vec<(f32, f32)> = Vec::new();
             if let Some(list) = neighbors.get(node_id) {
                 for neighbor_id in list {
                     if let Some(center) = cross_pos.get(neighbor_id) {
@@ -458,29 +555,39 @@ pub(in crate::layout) fn assign_positions_manual(
                     }
                 }
             }
+            if let Some(list) = weighted_neighbors.get(node_id) {
+                for (neighbor_id, weight) in list {
+                    if let Some(center) = cross_pos.get(neighbor_id) {
+                        weighted_neighbor_centers.push((*center, *weight));
+                    }
+                }
+            }
             let mut desired = if neighbor_centers.is_empty() {
                 cross_pos.get(node_id).copied().unwrap_or(0.0)
             } else {
-                neighbor_centers.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-                let mid = neighbor_centers.len() / 2;
-                if neighbor_centers.len() % 2 == 1 {
-                    neighbor_centers[mid]
-                } else {
-                    (neighbor_centers[mid - 1] + neighbor_centers[mid]) * 0.5
-                }
+                median_center(&mut neighbor_centers)
+                    .unwrap_or_else(|| cross_pos.get(node_id).copied().unwrap_or(0.0))
             };
             if let Some(current) = cross_pos.get(node_id) {
                 if !neighbor_centers.is_empty() {
-                    desired = desired * 0.85 + current * 0.15;
+                    let weighted = weighted_median_center(&mut weighted_neighbor_centers);
+                    desired = bounded_edge_aware_desired_center(
+                        desired,
+                        weighted,
+                        *current,
+                        config.node_spacing,
+                    );
                 } else {
                     desired = *current;
                 }
             }
-            let half = if is_horizontal(graph.direction) {
+            let visual_half = if is_horizontal(graph.direction) {
                 node.height / 2.0
             } else {
                 node.width / 2.0
             };
+            let half =
+                node_cross_spacing_half(node_id, visual_half, relationship_analysis_ref, config);
             entries.push((node_id.clone(), desired, half, idx));
         }
         entries.sort_by(|a, b| {
@@ -584,6 +691,73 @@ mod tests {
             end_decoration: None,
             style: crate::ir::EdgeStyle::Solid,
         }
+    }
+
+    #[test]
+    fn weighted_median_center_preserves_equal_weight_median() {
+        let mut two = [(0.0, 1.0), (100.0, 1.0)];
+        assert_eq!(weighted_median_center(&mut two), Some(50.0));
+
+        let mut four = [(0.0, 1.0), (40.0, 1.0), (80.0, 1.0), (120.0, 1.0)];
+        assert_eq!(weighted_median_center(&mut four), Some(60.0));
+
+        let mut weighted = [(0.0, 1.0), (100.0, 4.0)];
+        assert_eq!(weighted_median_center(&mut weighted), Some(100.0));
+    }
+
+    #[test]
+    fn flowchart_hub_relation_expands_cross_axis_spacing_half() {
+        let mut graph = Graph::new();
+        graph.kind = DiagramKind::Flowchart;
+        for (idx, id) in ["A", "B", "H", "C", "D"].iter().enumerate() {
+            graph.nodes.insert((*id).to_string(), make_graph_node(id));
+            graph.node_order.insert((*id).to_string(), idx);
+        }
+        let edges = vec![
+            make_edge("A", "H", None),
+            make_edge("B", "H", None),
+            make_edge("H", "C", Some("important label")),
+            make_edge("H", "D", None),
+        ];
+        graph.edges = edges.clone();
+        let labels = vec![
+            None,
+            None,
+            Some(TextBlock {
+                lines: vec!["important label".to_string()],
+                width: 120.0,
+                height: 20.0,
+            }),
+            None,
+        ];
+        let ranks: HashMap<String, usize> = [
+            ("A".to_string(), 0),
+            ("B".to_string(), 0),
+            ("H".to_string(), 1),
+            ("C".to_string(), 2),
+            ("D".to_string(), 2),
+        ]
+        .into_iter()
+        .collect();
+        let node_ids = vec!["A", "B", "H", "C", "D"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let analysis =
+            FlowchartRelationshipAnalysis::analyze(&graph, &node_ids, &edges, &labels, &ranks)
+                .expect("flowchart analysis should run");
+        let config = LayoutConfig::default();
+
+        let hub_half = node_cross_spacing_half("H", 20.0, Some(&analysis), &config);
+        let leaf_half = node_cross_spacing_half("A", 20.0, Some(&analysis), &config);
+        assert!(
+            hub_half > 20.0,
+            "hub should reserve extra routing clearance"
+        );
+        assert_eq!(
+            leaf_half, 20.0,
+            "low-degree leaves should keep compact spacing"
+        );
     }
 
     #[test]
