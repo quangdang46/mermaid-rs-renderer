@@ -203,6 +203,209 @@ fn enforce_flowchart_endpoint_ports(
     }
 }
 
+fn collect_other_flowchart_segments(
+    routed_points: &[Vec<(f32, f32)>],
+    excluded_idx: usize,
+) -> Vec<Segment> {
+    let mut segments = Vec::new();
+    for (idx, points) in routed_points.iter().enumerate() {
+        if idx == excluded_idx {
+            continue;
+        }
+        for segment in points.windows(2) {
+            segments.push((segment[0], segment[1]));
+        }
+    }
+    segments
+}
+
+fn endpoint_repair_score(
+    points: &[(f32, f32)],
+    edge: &crate::ir::Edge,
+    nodes: &BTreeMap<String, NodeLayout>,
+    other_segments: &[Segment],
+) -> Option<(usize, usize, usize, f32, usize, f32)> {
+    let hard = path_cleanup::flowchart_endpoint_direction_violation_count(points, edge, nodes);
+    if hard > 0 {
+        return None;
+    }
+    if path_cleanup::flowchart_path_hits_non_endpoint_nodes(points, &edge.from, &edge.to, nodes) {
+        return None;
+    }
+    let debt = path_cleanup::flowchart_endpoint_reentry_count(points, edge, nodes);
+    let (crossings, overlap) = edge_crossings_with_existing(points, other_segments);
+    let bends = path_bend_count(points);
+    let len = path_length(points);
+    Some((hard, debt, crossings, overlap, bends, len))
+}
+
+fn score_is_better(
+    candidate: (usize, usize, usize, f32, usize, f32),
+    best: (usize, usize, usize, f32, usize, f32),
+) -> bool {
+    if candidate.0 != best.0 {
+        return candidate.0 < best.0;
+    }
+    if candidate.1 != best.1 {
+        return candidate.1 < best.1;
+    }
+    if candidate.2 != best.2 {
+        return candidate.2 < best.2;
+    }
+    if (candidate.3 - best.3).abs() > 0.05 {
+        return candidate.3 < best.3;
+    }
+    if candidate.4 != best.4 {
+        return candidate.4 < best.4;
+    }
+    candidate.5 + 1.0 < best.5
+}
+
+fn repair_flowchart_endpoint_reentries_by_rerouting(
+    graph: &Graph,
+    nodes: &BTreeMap<String, NodeLayout>,
+    subgraphs: &[SubgraphLayout],
+    obstacles: &[Obstacle],
+    label_obstacles: &[Obstacle],
+    routing_grid: Option<&RoutingGrid>,
+    edge_ports: &mut [EdgePortInfo],
+    lane_offsets: &[f32],
+    routed_points: &mut [Vec<(f32, f32)>],
+    config: &LayoutConfig,
+) {
+    const SIDES: [EdgeSide; 4] = [
+        EdgeSide::Left,
+        EdgeSide::Right,
+        EdgeSide::Top,
+        EdgeSide::Bottom,
+    ];
+    for idx in 0..routed_points.len() {
+        let Some(edge) = graph.edges.get(idx) else {
+            continue;
+        };
+        if edge.from == edge.to || routed_points[idx].len() < 2 {
+            continue;
+        }
+        let other_segments = collect_other_flowchart_segments(routed_points, idx);
+        let Some(baseline_score) =
+            endpoint_repair_score(&routed_points[idx], edge, nodes, &other_segments)
+        else {
+            continue;
+        };
+        if baseline_score.1 == 0 {
+            continue;
+        }
+
+        let (Some(from_layout), Some(to_layout)) = (nodes.get(&edge.from), nodes.get(&edge.to))
+        else {
+            continue;
+        };
+        let temp_from = from_layout.anchor_subgraph.and_then(|anchor_idx| {
+            subgraphs
+                .get(anchor_idx)
+                .map(|sub| anchor_layout_for_edge(from_layout, sub, graph.direction, true))
+        });
+        let temp_to = to_layout.anchor_subgraph.and_then(|anchor_idx| {
+            subgraphs
+                .get(anchor_idx)
+                .map(|sub| anchor_layout_for_edge(to_layout, sub, graph.direction, false))
+        });
+        let from = temp_from.as_ref().unwrap_or(from_layout);
+        let to = temp_to.as_ref().unwrap_or(to_layout);
+        let current_port = edge_ports.get(idx).copied().unwrap_or(EdgePortInfo {
+            start_side: EdgeSide::Right,
+            end_side: EdgeSide::Left,
+            start_offset: 0.0,
+            end_offset: 0.0,
+        });
+        let stub_len = port_stub_length(config, from, to);
+        let mut best_score = baseline_score;
+        let mut best_points: Option<Vec<(f32, f32)>> = None;
+        let mut best_port = current_port;
+
+        for start_side in SIDES {
+            for end_side in SIDES {
+                let candidate_port = EdgePortInfo {
+                    start_side,
+                    end_side,
+                    start_offset: if start_side == current_port.start_side {
+                        current_port.start_offset
+                    } else {
+                        0.0
+                    },
+                    end_offset: if end_side == current_port.end_side {
+                        current_port.end_offset
+                    } else {
+                        0.0
+                    },
+                };
+                let route_ctx = RouteContext {
+                    from_id: &edge.from,
+                    to_id: &edge.to,
+                    from,
+                    to,
+                    direction: graph.direction,
+                    config,
+                    obstacles,
+                    label_obstacles,
+                    fast_route: false,
+                    base_offset: lane_offsets.get(idx).copied().unwrap_or_default(),
+                    start_side: candidate_port.start_side,
+                    end_side: candidate_port.end_side,
+                    start_offset: candidate_port.start_offset,
+                    end_offset: candidate_port.end_offset,
+                    stub_len,
+                    start_inset: if edge.arrow_start {
+                        crate::edge_geometry::arrowhead_inset(graph.kind, edge.arrow_start_kind)
+                    } else {
+                        0.0
+                    },
+                    end_inset: if edge.arrow_end {
+                        crate::edge_geometry::arrowhead_inset(graph.kind, edge.arrow_end_kind)
+                    } else {
+                        0.0
+                    },
+                    prefer_shorter_ties: true,
+                    preferred_label_id: None,
+                    preferred_label_center: None,
+                    preferred_label_obstacle: None,
+                    preferred_label_clearance: 0.0,
+                    force_preferred_label_via: false,
+                    coarse_grid_retry: true,
+                };
+                let candidate = route_edge_with_avoidance(
+                    &route_ctx,
+                    None,
+                    routing_grid,
+                    Some(other_segments.as_slice()),
+                );
+                let Some(score) = endpoint_repair_score(&candidate, edge, nodes, &other_segments)
+                else {
+                    continue;
+                };
+                if score.1 >= baseline_score.1 {
+                    continue;
+                }
+                if score.5 > baseline_score.5 * 4.0 + config.node_spacing * 4.0 {
+                    continue;
+                }
+                if score_is_better(score, best_score) {
+                    best_score = score;
+                    best_points = Some(candidate);
+                    best_port = candidate_port;
+                }
+            }
+        }
+
+        if let Some(points) = best_points {
+            routed_points[idx] = points;
+            if let Some(port) = edge_ports.get_mut(idx) {
+                *port = best_port;
+            }
+        }
+    }
+}
+
 fn choose_outer_back_edge_sides(
     from: &NodeLayout,
     to: &NodeLayout,
@@ -1203,6 +1406,20 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
             config,
         );
         enforce_flowchart_endpoint_ports(graph, nodes, &edge_ports, &mut routed_points, config);
+        path_cleanup::repair_flowchart_endpoint_reentries(graph, nodes, &mut routed_points, config);
+        repair_flowchart_endpoint_reentries_by_rerouting(
+            graph,
+            nodes,
+            subgraphs,
+            &obstacles,
+            &route_label_obstacles,
+            routing_grid.as_ref(),
+            &mut edge_ports,
+            &lane_offsets,
+            &mut routed_points,
+            config,
+        );
+        path_cleanup::repair_flowchart_endpoint_reentries(graph, nodes, &mut routed_points, config);
     }
     if graph.kind == DiagramKind::Flowchart {
         let route_label_centers = route_labels::route_label_centers(&route_label_plans);

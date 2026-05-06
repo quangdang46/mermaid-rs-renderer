@@ -5,6 +5,10 @@ use crate::config::LayoutConfig;
 use crate::ir::Graph;
 
 use super::super::NodeLayout;
+use super::super::geometry::{
+    endpoint_side_for_point, segment_hits_node_shape_interior, segment_intrudes_endpoint_rect,
+    source_exits_outward, target_enters_from_outside,
+};
 use super::super::routing::{
     Obstacle, Segment, collinear_overlap_length, compress_path, edge_crossings_with_existing,
     path_bend_count, path_length, segment_intersects_rect,
@@ -643,6 +647,285 @@ pub(in crate::layout) fn detour_flowchart_paths_around_non_endpoint_nodes(
                 }
             }
             let Some(candidate) = best else {
+                break;
+            };
+            *points = candidate;
+        }
+    }
+}
+
+fn endpoint_node_obstacle(node: &NodeLayout) -> Obstacle {
+    Obstacle {
+        id: node.id.clone(),
+        x: node.x,
+        y: node.y,
+        width: node.width,
+        height: node.height,
+        members: None,
+    }
+}
+
+fn endpoint_reentry_count(points: &[(f32, f32)], node: &NodeLayout, is_source: bool) -> usize {
+    if points.len() < 3 {
+        return 0;
+    }
+    let last_segment_idx = points.len().saturating_sub(2);
+    points
+        .windows(2)
+        .enumerate()
+        .filter(|(idx, segment)| {
+            let allowed_endpoint_stub = if is_source {
+                *idx == 0
+            } else {
+                *idx == last_segment_idx
+            };
+            !allowed_endpoint_stub && segment_hits_node_shape_interior(segment[0], segment[1], node)
+        })
+        .count()
+}
+
+pub(in crate::layout) fn flowchart_endpoint_reentry_count(
+    points: &[(f32, f32)],
+    edge: &crate::ir::Edge,
+    nodes: &BTreeMap<String, NodeLayout>,
+) -> usize {
+    let mut count = 0usize;
+    if let Some(from) = nodes.get(&edge.from) {
+        count += endpoint_reentry_count(points, from, true);
+    }
+    if edge.to != edge.from
+        && let Some(to) = nodes.get(&edge.to)
+    {
+        count += endpoint_reentry_count(points, to, false);
+    }
+    count
+}
+
+fn first_endpoint_reentry_span(
+    points: &[(f32, f32)],
+    node: &NodeLayout,
+    is_source: bool,
+) -> Option<(usize, usize)> {
+    if points.len() < 3 {
+        return None;
+    }
+    let last_segment_idx = points.len().saturating_sub(2);
+    let mut idx = 0usize;
+    while idx < last_segment_idx + 1 {
+        let allowed_endpoint_stub = if is_source {
+            idx == 0
+        } else {
+            idx == last_segment_idx
+        };
+        if !allowed_endpoint_stub
+            && segment_hits_node_shape_interior(points[idx], points[idx + 1], node)
+        {
+            let first = idx;
+            let mut last = idx;
+            while last < last_segment_idx {
+                let next_idx = last + 1;
+                let next_allowed = if is_source {
+                    next_idx == 0
+                } else {
+                    next_idx == last_segment_idx
+                };
+                if next_allowed
+                    || !segment_hits_node_shape_interior(
+                        points[next_idx],
+                        points[next_idx + 1],
+                        node,
+                    )
+                {
+                    break;
+                }
+                last = next_idx;
+            }
+            return Some((first, last));
+        }
+        idx += 1;
+    }
+    None
+}
+
+pub(in crate::layout) fn flowchart_endpoint_direction_violation_count(
+    points: &[(f32, f32)],
+    edge: &crate::ir::Edge,
+    nodes: &BTreeMap<String, NodeLayout>,
+) -> usize {
+    if points.len() < 2 {
+        return 2;
+    }
+    let mut violations = 0usize;
+    if let Some(from) = nodes.get(&edge.from) {
+        let start = points[0];
+        let next = points[1];
+        let side = endpoint_side_for_point(from, start);
+        if !source_exits_outward(side, start, next) {
+            violations += 1;
+        }
+        if segment_intrudes_endpoint_rect(side, next, start, from) {
+            violations += 1;
+        }
+    }
+    if let Some(to) = nodes.get(&edge.to) {
+        let end = points[points.len() - 1];
+        let prev = points[points.len() - 2];
+        let side = endpoint_side_for_point(to, end);
+        if !target_enters_from_outside(side, prev, end) {
+            violations += 1;
+        }
+        if segment_intrudes_endpoint_rect(side, prev, end, to) {
+            violations += 1;
+        }
+    }
+    violations
+}
+
+fn endpoint_reentry_detour_candidates(
+    path: &[(f32, f32)],
+    first_seg_idx: usize,
+    last_seg_idx: usize,
+    obstacle: &Obstacle,
+    clearance: f32,
+    is_source: bool,
+) -> Vec<Vec<(f32, f32)>> {
+    if first_seg_idx + 1 >= path.len() || last_seg_idx + 1 >= path.len() {
+        return Vec::new();
+    }
+
+    // Endpoint doglegs often have the first offending segment starting on the
+    // endpoint boundary or just inside the shape. Widen the replacement window so
+    // the detour can start from the prior known-outside point. Preserve the first
+    // source stub when the re-entry starts immediately after it.
+    let start_idx = if first_seg_idx > 0 && (!is_source || first_seg_idx > 1) {
+        first_seg_idx - 1
+    } else {
+        first_seg_idx
+    };
+    let end_idx = last_seg_idx + 1;
+    if start_idx >= end_idx || end_idx >= path.len() {
+        return Vec::new();
+    }
+
+    let left = obstacle.x - clearance;
+    let right = obstacle.x + obstacle.width + clearance;
+    let top = obstacle.y - clearance;
+    let bottom = obstacle.y + obstacle.height + clearance;
+    let entry = path[start_idx];
+    let exit = path[end_idx];
+
+    perimeter_route_candidates(entry, exit, left, right, top, bottom)
+        .into_iter()
+        .map(|route| {
+            let mut candidate = Vec::with_capacity(path.len() + 2);
+            candidate.extend_from_slice(&path[..=start_idx]);
+            if route.len() > 2 {
+                candidate.extend_from_slice(&route[1..(route.len() - 1)]);
+            }
+            candidate.extend_from_slice(&path[end_idx..]);
+            compress_path(&candidate)
+        })
+        .collect()
+}
+
+fn repair_endpoint_reentry_once(
+    points: &[(f32, f32)],
+    edge: &crate::ir::Edge,
+    nodes: &BTreeMap<String, NodeLayout>,
+    config: &LayoutConfig,
+) -> Option<Vec<(f32, f32)>> {
+    let baseline_reentries = flowchart_endpoint_reentry_count(points, edge, nodes);
+    if baseline_reentries == 0
+        || flowchart_endpoint_direction_violation_count(points, edge, nodes) > 0
+    {
+        return None;
+    }
+    let baseline_len = path_length(points);
+    let clearance = (config.node_spacing * 0.12).max(8.0);
+    let mut best: Option<Vec<(f32, f32)>> = None;
+    let mut best_reentries = baseline_reentries;
+    let mut best_cost = f32::INFINITY;
+
+    let mut endpoint_specs: Vec<(&NodeLayout, bool)> = Vec::new();
+    if let Some(from) = nodes.get(&edge.from) {
+        endpoint_specs.push((from, true));
+    }
+    if edge.to != edge.from
+        && let Some(to) = nodes.get(&edge.to)
+    {
+        endpoint_specs.push((to, false));
+    }
+
+    for (node, is_source) in endpoint_specs {
+        let Some((first_seg_idx, last_seg_idx)) =
+            first_endpoint_reentry_span(points, node, is_source)
+        else {
+            continue;
+        };
+        let obstacle = endpoint_node_obstacle(node);
+        for clearance_scale in [1.0, 1.5, 2.0, 3.0, 4.0] {
+            let candidate_clearance = clearance * clearance_scale;
+            let candidates = node_detour_candidates(
+                points,
+                first_seg_idx,
+                last_seg_idx,
+                &obstacle,
+                candidate_clearance,
+            )
+            .into_iter()
+            .chain(endpoint_reentry_detour_candidates(
+                points,
+                first_seg_idx,
+                last_seg_idx,
+                &obstacle,
+                candidate_clearance,
+                is_source,
+            ));
+            for candidate in candidates {
+                let violations =
+                    flowchart_endpoint_direction_violation_count(&candidate, edge, nodes);
+                let hits_non_endpoint =
+                    flowchart_path_hits_non_endpoint_nodes(&candidate, &edge.from, &edge.to, nodes);
+                let reentries = flowchart_endpoint_reentry_count(&candidate, edge, nodes);
+                if violations > 0 {
+                    continue;
+                }
+                if hits_non_endpoint {
+                    continue;
+                }
+                if reentries >= best_reentries {
+                    continue;
+                }
+                let len = path_length(&candidate);
+                if len > baseline_len * 4.0 + clearance * 8.0 {
+                    continue;
+                }
+                let bends = path_bend_count(&candidate);
+                let cost = len + bends as f32 * clearance + reentries as f32 * clearance * 20.0;
+                if reentries < best_reentries || cost < best_cost {
+                    best_reentries = reentries;
+                    best_cost = cost;
+                    best = Some(candidate);
+                }
+            }
+        }
+    }
+
+    (best_reentries < baseline_reentries).then_some(best?)
+}
+
+pub(in crate::layout) fn repair_flowchart_endpoint_reentries(
+    graph: &Graph,
+    nodes: &BTreeMap<String, NodeLayout>,
+    routed_points: &mut [Vec<(f32, f32)>],
+    config: &LayoutConfig,
+) {
+    for (idx, points) in routed_points.iter_mut().enumerate() {
+        let Some(edge) = graph.edges.get(idx) else {
+            continue;
+        };
+        for _ in 0..6 {
+            let Some(candidate) = repair_endpoint_reentry_once(points, edge, nodes, config) else {
                 break;
             };
             *points = candidate;
