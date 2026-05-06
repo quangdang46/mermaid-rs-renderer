@@ -18,6 +18,8 @@ use super::plan;
 use super::post_route;
 use super::roles;
 use super::route_labels;
+#[cfg(debug_assertions)]
+use super::stage_validation;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum PortTrack {
@@ -2362,6 +2364,11 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
             profile,
         );
     }
+    #[cfg(debug_assertions)]
+    {
+        let report = stage_validation::validate_port_assignment(graph, &edge_ports);
+        stage_validation::debug_assert_structural("port-assignment", report);
+    }
     if let Some(metrics) = stage_metrics.as_mut() {
         metrics.port_assignment_us = metrics
             .port_assignment_us
@@ -2680,6 +2687,12 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
         routed_points[*idx] = points;
     }
 
+    #[cfg(debug_assertions)]
+    {
+        let report = stage_validation::validate_routes(graph, nodes, &routed_points);
+        stage_validation::debug_assert_structural("initial-routing", report);
+    }
+
     if graph.kind == DiagramKind::Flowchart {
         optimize_flowchart_routes_globally(
             graph,
@@ -2792,6 +2805,11 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
             config,
         );
         path_cleanup::repair_flowchart_endpoint_reentries(graph, nodes, &mut routed_points, config);
+    }
+    #[cfg(debug_assertions)]
+    if graph.kind == DiagramKind::Flowchart {
+        let report = stage_validation::validate_routes(graph, nodes, &routed_points);
+        stage_validation::debug_assert_no_hard_geometry_errors("post-cleanup", report);
     }
     if graph.kind == DiagramKind::Flowchart {
         let route_label_centers = route_labels::route_label_centers(&route_label_plans);

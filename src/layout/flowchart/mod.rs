@@ -9,4 +9,6 @@ pub(super) mod policy;
 pub(super) mod post_route;
 pub(super) mod roles;
 pub(super) mod route_labels;
+#[cfg(any(debug_assertions, test))]
+pub(super) mod stage_validation;
 pub(super) mod subgraph_spacing;

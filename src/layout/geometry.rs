@@ -234,6 +234,15 @@ pub(super) fn point_in_polygon_strict(point: (f32, f32), polygon: &[(f32, f32)])
     if polygon.len() < 3 {
         return false;
     }
+    if polygon
+        .iter()
+        .copied()
+        .zip(polygon.iter().copied().cycle().skip(1))
+        .take(polygon.len())
+        .any(|(a, b)| point_near_segment(point, a, b, POINT_EPS))
+    {
+        return false;
+    }
     let mut inside = false;
     let (px, py) = point;
     let mut prev = polygon[polygon.len() - 1];
@@ -429,6 +438,22 @@ fn point_in_rect(point: (f32, f32), rect: (f32, f32, f32, f32)) -> bool {
     point.0 >= rx && point.0 <= rx + rw && point.1 >= ry && point.1 <= ry + rh
 }
 
+fn point_near_segment(point: (f32, f32), a: (f32, f32), b: (f32, f32), eps: f32) -> bool {
+    let dx = b.0 - a.0;
+    let dy = b.1 - a.1;
+    let len2 = dx * dx + dy * dy;
+    if len2 <= GEOM_EPS {
+        return points_near(point, a);
+    }
+    let t = ((point.0 - a.0) * dx + (point.1 - a.1) * dy) / len2;
+    if t < -GEOM_EPS || t > 1.0 + GEOM_EPS {
+        return false;
+    }
+    let clamped_t = t.clamp(0.0, 1.0);
+    let proj = (a.0 + dx * clamped_t, a.1 + dy * clamped_t);
+    (point.0 - proj.0).hypot(point.1 - proj.1) <= eps
+}
+
 fn points_near(a: (f32, f32), b: (f32, f32)) -> bool {
     (a.0 - b.0).abs() <= POINT_EPS && (a.1 - b.1).abs() <= POINT_EPS
 }
@@ -476,10 +501,22 @@ mod tests {
         let diamond = node(NodeShape::Diamond);
         assert!(point_inside_node_shape_strict(&diamond, (60.0, 50.0)));
         assert!(!point_inside_node_shape_strict(&diamond, (15.0, 25.0)));
+        assert!(!point_inside_node_shape_strict(&diamond, (60.0, 20.0)));
         assert!(segment_hits_node_shape_interior(
             (60.0, 10.0),
             (60.0, 90.0),
             &diamond
+        ));
+    }
+
+    #[test]
+    fn rectangle_boundary_is_not_strict_interior() {
+        let rect = node(NodeShape::Rectangle);
+        assert!(!point_inside_node_shape_strict(&rect, (60.0, 20.0)));
+        assert!(!segment_hits_node_shape_interior(
+            (0.0, 20.0),
+            (120.0, 20.0),
+            &rect
         ));
     }
 

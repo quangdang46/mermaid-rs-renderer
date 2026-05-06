@@ -99,7 +99,9 @@ pub fn flowchart_quality_metrics(layout: &Layout) -> Option<FlowchartQualityMetr
             metrics.endpoint_node_intrusions += 1;
         }
         metrics.endpoint_node_reentries += endpoint_reentry_count(&edge.points, from, true);
-        metrics.endpoint_node_reentries += endpoint_reentry_count(&edge.points, to, false);
+        if edge.to != edge.from {
+            metrics.endpoint_node_reentries += endpoint_reentry_count(&edge.points, to, false);
+        }
 
         for (node_id, node) in &layout.nodes {
             if node_id == &edge.from

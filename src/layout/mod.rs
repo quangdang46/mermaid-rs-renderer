@@ -223,6 +223,12 @@ pub fn compute_layout_with_metrics(
         .label_placement_us
         .saturating_add(label_start.elapsed().as_micros());
 
+    #[cfg(debug_assertions)]
+    if layout.kind == crate::ir::DiagramKind::Flowchart {
+        let report = flowchart::stage_validation::validate_final_layout(&layout);
+        flowchart::stage_validation::debug_assert_no_geometry_debt("render-final", report);
+    }
+
     (layout, stage_metrics)
 }
 
@@ -667,6 +673,11 @@ fn compute_flowchart_layout(
 
     let subgraphs = build_subgraph_layouts(graph, &nodes, theme, config);
     apply_subgraph_anchors(graph, &subgraphs, &mut nodes);
+    #[cfg(debug_assertions)]
+    if graph.kind == crate::ir::DiagramKind::Flowchart {
+        let report = flowchart::stage_validation::validate_node_placement(graph, &nodes);
+        flowchart::stage_validation::debug_assert_structural("node-placement", report);
+    }
 
     let edges = flowchart::edge_pipeline::build_routed_edges(
         flowchart::edge_pipeline::RoutedEdgeBuildContext {
