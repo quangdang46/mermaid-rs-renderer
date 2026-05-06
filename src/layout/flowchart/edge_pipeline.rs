@@ -652,53 +652,130 @@ fn candidate_vertical_sides(from: &NodeLayout, to: &NodeLayout) -> (EdgeSide, Ed
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct RoutedSideSearchProfile {
     max_candidates: usize,
+    port_offset_candidates: usize,
+    max_refined_edges: Option<usize>,
     fast_route: bool,
     use_grid: bool,
     use_existing_segments: bool,
 }
 
-fn flowchart_side_search_profile(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FlowchartRoutingTier {
+    Disabled,
+    Exact,
+    Bounded,
+    Linear,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FlowchartRoutingPerformanceProfile {
+    tier: FlowchartRoutingTier,
+    side_search: Option<RoutedSideSearchProfile>,
+    global_route_passes: usize,
+    negotiated_congestion_passes: usize,
+    use_route_occupancy: bool,
+    allow_exterior_fallback: bool,
+}
+
+fn flowchart_routing_performance_profile(
     graph: &Graph,
     layout_node_count: usize,
     tiny_graph: bool,
-) -> Option<RoutedSideSearchProfile> {
+) -> FlowchartRoutingPerformanceProfile {
+    let edge_count = graph.edges.len();
+    let use_route_occupancy = !tiny_graph && edge_count > 2;
     if graph.kind != DiagramKind::Flowchart || graph.edges.is_empty() {
-        return None;
+        return FlowchartRoutingPerformanceProfile {
+            tier: FlowchartRoutingTier::Disabled,
+            side_search: None,
+            global_route_passes: 0,
+            negotiated_congestion_passes: 0,
+            use_route_occupancy,
+            allow_exterior_fallback: false,
+        };
     }
 
-    let edge_count = graph.edges.len();
     let node_count = layout_node_count.max(1);
     let dense = edge_count.saturating_mul(2) >= node_count.saturating_mul(3);
     let compound = !graph.subgraphs.is_empty();
 
-    // Port-side scoring is now available for every flowchart, including compound
-    // graphs. Keep the expensive full router for small/medium diagrams where it
-    // materially improves ports, and fall back to bounded fast scoring for large
-    // or dense diagrams so port assignment remains predictable.
-    let profile = if edge_count <= 64 {
-        RoutedSideSearchProfile {
-            max_candidates: 5,
-            fast_route: tiny_graph,
-            use_grid: !tiny_graph,
-            use_existing_segments: true,
-        }
+    // Port-side scoring is available for every flowchart, including compound
+    // graphs. The tier makes the tradeoff explicit: exact search for small
+    // diagrams, bounded fast scoring for dense medium diagrams, and linear caps
+    // for very large diagrams so worst-case routing remains predictable.
+    let (tier, side_search) = if edge_count <= 64 {
+        let offset_candidates = if edge_count <= 32 { 4 } else { 3 };
+        (
+            FlowchartRoutingTier::Exact,
+            RoutedSideSearchProfile {
+                max_candidates: 5,
+                port_offset_candidates: offset_candidates,
+                max_refined_edges: None,
+                fast_route: tiny_graph,
+                use_grid: !tiny_graph,
+                use_existing_segments: true,
+            },
+        )
+    } else if edge_count > 320 {
+        (
+            FlowchartRoutingTier::Linear,
+            RoutedSideSearchProfile {
+                max_candidates: 3,
+                port_offset_candidates: 2,
+                max_refined_edges: Some(320),
+                fast_route: true,
+                use_grid: false,
+                use_existing_segments: false,
+            },
+        )
     } else if edge_count <= 160 || compound || dense {
-        RoutedSideSearchProfile {
-            max_candidates: 4,
-            fast_route: true,
-            use_grid: false,
-            use_existing_segments: edge_count <= 160,
-        }
+        (
+            FlowchartRoutingTier::Bounded,
+            RoutedSideSearchProfile {
+                max_candidates: 4,
+                port_offset_candidates: 3,
+                max_refined_edges: None,
+                fast_route: true,
+                use_grid: false,
+                use_existing_segments: edge_count <= 160,
+            },
+        )
     } else {
-        RoutedSideSearchProfile {
-            max_candidates: 3,
-            fast_route: true,
-            use_grid: false,
-            use_existing_segments: false,
-        }
+        (
+            FlowchartRoutingTier::Linear,
+            RoutedSideSearchProfile {
+                max_candidates: 3,
+                port_offset_candidates: 2,
+                max_refined_edges: Some(320),
+                fast_route: true,
+                use_grid: false,
+                use_existing_segments: false,
+            },
+        )
     };
 
-    Some(profile)
+    let global_route_passes = match tier {
+        FlowchartRoutingTier::Exact if edge_count >= 3 && edge_count <= 48 => 2,
+        FlowchartRoutingTier::Exact if edge_count >= 3 => 1,
+        FlowchartRoutingTier::Bounded if edge_count >= 3 && edge_count <= 128 => 1,
+        _ => 0,
+    };
+
+    let density = edge_count as f32 / node_count as f32;
+    let negotiated_congestion_passes = match tier {
+        FlowchartRoutingTier::Exact if edge_count >= 12 && density >= 1.1 => 2,
+        FlowchartRoutingTier::Bounded if edge_count <= 160 && density >= 1.35 => 1,
+        _ => 0,
+    };
+
+    FlowchartRoutingPerformanceProfile {
+        tier,
+        side_search: Some(side_search),
+        global_route_passes,
+        negotiated_congestion_passes,
+        use_route_occupancy,
+        allow_exterior_fallback: true,
+    }
 }
 
 fn push_unique_side_candidate_limited(
@@ -1097,14 +1174,8 @@ fn port_offset_candidates(
     offsets
 }
 
-fn port_refinement_offset_limit(graph: &Graph, profile: RoutedSideSearchProfile) -> usize {
-    if graph.edges.len() <= 32 && profile.max_candidates >= 5 {
-        4
-    } else if graph.edges.len() <= 160 {
-        3
-    } else {
-        2
-    }
+fn port_refinement_offset_limit(_graph: &Graph, profile: RoutedSideSearchProfile) -> usize {
+    profile.port_offset_candidates.max(1)
 }
 
 fn route_points_for_port_candidate(
@@ -1309,9 +1380,16 @@ fn refine_flowchart_ports_with_route_candidates(
     let predicted_lane_assignments = plan::plan_edge_lanes(graph, nodes, subgraphs, config);
     let predicted_lane_offsets =
         predicted_lane_assignments.effective_offsets(edge_ports, graph.kind, config);
+    let mut refined_edges = 0usize;
     for (idx, edge) in graph.edges.iter().enumerate() {
         if edge.from == edge.to {
             continue;
+        }
+        if profile
+            .max_refined_edges
+            .is_some_and(|limit| refined_edges >= limit)
+        {
+            break;
         }
         let Some(current) = edge_ports.get(idx).copied() else {
             continue;
@@ -1467,6 +1545,7 @@ fn refine_flowchart_ports_with_route_candidates(
         if let Some(port) = edge_ports.get_mut(idx) {
             *port = best_port;
         }
+        refined_edges += 1;
     }
 }
 
@@ -1541,16 +1620,8 @@ fn score_global_route_candidate(
     }
 }
 
-fn flowchart_global_route_passes(graph: &Graph) -> usize {
-    if graph.kind != DiagramKind::Flowchart || graph.edges.len() < 3 {
-        0
-    } else if graph.edges.len() <= 48 {
-        2
-    } else if graph.edges.len() <= 128 {
-        1
-    } else {
-        0
-    }
+fn flowchart_global_route_passes(profile: FlowchartRoutingPerformanceProfile) -> usize {
+    profile.global_route_passes
 }
 
 fn occupancy_from_other_routes(
@@ -1575,19 +1646,8 @@ fn occupancy_from_other_routes(
     any.then_some(occupancy)
 }
 
-fn flowchart_negotiated_congestion_passes(graph: &Graph) -> usize {
-    if graph.kind != DiagramKind::Flowchart || graph.edges.len() < 12 {
-        return 0;
-    }
-    let node_count = graph.nodes.len().max(1);
-    let density = graph.edges.len() as f32 / node_count as f32;
-    if graph.edges.len() <= 64 && density >= 1.1 {
-        2
-    } else if graph.edges.len() <= 160 && density >= 1.35 {
-        1
-    } else {
-        0
-    }
+fn flowchart_negotiated_congestion_passes(profile: FlowchartRoutingPerformanceProfile) -> usize {
+    profile.negotiated_congestion_passes
 }
 
 fn combined_occupancy_from_other_routes(
@@ -1661,6 +1721,7 @@ fn congestion_improves_enough(
 #[allow(clippy::too_many_arguments)]
 fn optimize_flowchart_routes_globally(
     graph: &Graph,
+    performance: FlowchartRoutingPerformanceProfile,
     nodes: &BTreeMap<String, NodeLayout>,
     subgraphs: &[SubgraphLayout],
     obstacles: &[Obstacle],
@@ -1679,7 +1740,7 @@ fn optimize_flowchart_routes_globally(
     reserved_channels: &[ReservedRoutingChannel],
     config: &LayoutConfig,
 ) {
-    let passes = flowchart_global_route_passes(graph);
+    let passes = flowchart_global_route_passes(performance);
     if passes == 0 {
         return;
     }
@@ -1841,6 +1902,7 @@ fn optimize_flowchart_routes_globally(
 #[allow(clippy::too_many_arguments)]
 fn negotiate_flowchart_route_congestion(
     graph: &Graph,
+    performance: FlowchartRoutingPerformanceProfile,
     nodes: &BTreeMap<String, NodeLayout>,
     subgraphs: &[SubgraphLayout],
     obstacles: &[Obstacle],
@@ -1859,7 +1921,7 @@ fn negotiate_flowchart_route_congestion(
     reserved_channels: &[ReservedRoutingChannel],
     config: &LayoutConfig,
 ) {
-    let passes = flowchart_negotiated_congestion_passes(graph);
+    let passes = flowchart_negotiated_congestion_passes(performance);
     if passes == 0 {
         return;
     }
@@ -2077,8 +2139,9 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
     }
     let edge_roles = roles::classify_edge_roles(graph);
     let mut side_loads: HashMap<String, [usize; 4]> = HashMap::new();
-    let routed_side_search_profile =
-        flowchart_side_search_profile(graph, layout_node_count, tiny_graph);
+    let routing_performance =
+        flowchart_routing_performance_profile(graph, layout_node_count, tiny_graph);
+    let routed_side_search_profile = routing_performance.side_search;
     let mut edge_ports: Vec<EdgePortInfo> = vec![
         EdgePortInfo {
             start_side: EdgeSide::Right,
@@ -2482,7 +2545,7 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
     }
 
     let mut routed_points: Vec<Vec<(f32, f32)>> = vec![Vec::new(); graph.edges.len()];
-    let use_occupancy = !tiny_graph && graph.edges.len() > 2;
+    let use_occupancy = routing_performance.use_route_occupancy;
     let mut edge_occupancy = if use_occupancy {
         Some(EdgeOccupancy::new(
             config.node_spacing.max(MIN_NODE_SPACING_FLOOR) * EDGE_OCCUPANCY_CELL_RATIO,
@@ -2601,7 +2664,7 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
             reserved_channels: &reserved_channels,
             force_preferred_label_via: graph.kind != DiagramKind::Flowchart,
             coarse_grid_retry: graph.kind == DiagramKind::Flowchart,
-            allow_exterior_fallback: graph.kind == DiagramKind::Flowchart,
+            allow_exterior_fallback: routing_performance.allow_exterior_fallback,
         };
         let use_existing_for_edge = !(matches!(graph.kind, DiagramKind::Class | DiagramKind::Er)
             && edge.style == crate::ir::EdgeStyle::Dotted);
@@ -2703,6 +2766,7 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
     if graph.kind == DiagramKind::Flowchart {
         optimize_flowchart_routes_globally(
             graph,
+            routing_performance,
             nodes,
             subgraphs,
             &obstacles,
@@ -2723,6 +2787,7 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
         );
         negotiate_flowchart_route_congestion(
             graph,
+            routing_performance,
             nodes,
             subgraphs,
             &obstacles,
@@ -2929,7 +2994,7 @@ mod tests {
     }
 
     #[test]
-    fn side_search_profile_includes_compound_flowcharts() {
+    fn routing_profile_uses_exact_search_for_small_compound_flowcharts() {
         let mut graph = Graph::new();
         graph.edges = (0..40).map(|_| edge("a", "b")).collect();
         graph.subgraphs.push(Subgraph {
@@ -2940,21 +3005,35 @@ mod tests {
             icon: None,
         });
 
-        let profile = flowchart_side_search_profile(&graph, 12, false)
+        let performance = flowchart_routing_performance_profile(&graph, 12, false);
+        let profile = performance
+            .side_search
             .expect("compound flowcharts should use route-scored side search");
+        assert_eq!(performance.tier, FlowchartRoutingTier::Exact);
+        assert_eq!(performance.global_route_passes, 2);
+        assert_eq!(performance.negotiated_congestion_passes, 2);
         assert_eq!(profile.max_candidates, 5);
+        assert_eq!(profile.port_offset_candidates, 3);
+        assert_eq!(profile.max_refined_edges, None);
         assert!(!profile.fast_route);
         assert!(profile.use_grid);
     }
 
     #[test]
-    fn side_search_profile_bounds_large_flowcharts() {
+    fn routing_profile_bounds_large_flowcharts() {
         let mut graph = Graph::new();
         graph.edges = (0..200).map(|_| edge("a", "b")).collect();
 
-        let profile = flowchart_side_search_profile(&graph, 200, false)
+        let performance = flowchart_routing_performance_profile(&graph, 200, false);
+        let profile = performance
+            .side_search
             .expect("large flowcharts should still get bounded side search");
+        assert_eq!(performance.tier, FlowchartRoutingTier::Linear);
+        assert_eq!(performance.global_route_passes, 0);
+        assert_eq!(performance.negotiated_congestion_passes, 0);
         assert_eq!(profile.max_candidates, 3);
+        assert_eq!(profile.port_offset_candidates, 2);
+        assert_eq!(profile.max_refined_edges, Some(320));
         assert!(profile.fast_route);
         assert!(!profile.use_grid);
         assert!(!profile.use_existing_segments);
