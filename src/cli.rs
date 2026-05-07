@@ -4,7 +4,7 @@ use crate::layout_dump::write_layout_dump;
 use crate::parser::parse_mermaid;
 #[cfg(feature = "png")]
 use crate::render::write_output_png;
-use crate::render::{render_svg_with_dimensions, write_output_svg};
+use crate::render::{measure_svg_dimensions, render_svg_with_dimensions, write_output_svg};
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use std::io::{self, Read};
@@ -60,6 +60,10 @@ pub struct Args {
     /// Output timing information as JSON to stderr
     #[arg(long = "timing")]
     pub timing: bool,
+
+    /// Print computed image size metadata as JSON and exit
+    #[arg(long = "size")]
+    pub size: bool,
 
     /// Use fast text metrics (approximate widths) for speed
     #[arg(long = "fastText")]
@@ -189,13 +193,16 @@ pub fn run() -> Result<()> {
             write_layout_dump(path, &layout, &parsed.graph)?;
         }
 
+        let output_dimensions = Some((config.render.width, config.render.height));
+        let dimensions = measure_svg_dimensions(&layout, &config.layout, output_dimensions);
+        if args.size {
+            println!("{}", serde_json::to_string_pretty(&dimensions)?);
+            return Ok(());
+        }
+
         let t_render_start = std::time::Instant::now();
-        let svg = render_svg_with_dimensions(
-            &layout,
-            &config.theme,
-            &config.layout,
-            Some((config.render.width, config.render.height)),
-        );
+        let svg =
+            render_svg_with_dimensions(&layout, &config.theme, &config.layout, output_dimensions);
         let render_us = t_render_start.elapsed().as_micros();
 
         match args.output_format {
@@ -235,6 +242,30 @@ pub fn run() -> Result<()> {
     }
 
     // Multiple diagrams (Markdown input)
+    if args.size {
+        let mut sizes = Vec::new();
+        for (idx, diagram) in diagrams.iter().enumerate() {
+            let parsed = parse_mermaid(diagram)?;
+            let mut config = base_config.clone();
+            if let Some(init_cfg) = parsed.init_config.clone() {
+                config = merge_init_config(config, init_cfg);
+            }
+            let (layout, _) =
+                compute_layout_with_metrics(&parsed.graph, &config.theme, &config.layout);
+            let dimensions = measure_svg_dimensions(
+                &layout,
+                &config.layout,
+                Some((config.render.width, config.render.height)),
+            );
+            sizes.push(serde_json::json!({
+                "index": idx,
+                "dimensions": dimensions,
+            }));
+        }
+        println!("{}", serde_json::to_string_pretty(&sizes)?);
+        return Ok(());
+    }
+
     let outputs =
         resolve_multi_outputs(args.output.as_deref(), args.output_format, diagrams.len())?;
     for (idx, diagram) in diagrams.iter().enumerate() {
@@ -492,6 +523,12 @@ sequenceDiagram
         assert_eq!(parse_aspect_ratio_value("16:9").unwrap(), 16.0 / 9.0);
         assert_eq!(parse_aspect_ratio_value("4/3").unwrap(), 4.0 / 3.0);
         assert_eq!(parse_aspect_ratio_value("1.5").unwrap(), 1.5);
+    }
+
+    #[test]
+    fn parses_size_flag() {
+        let args = Args::try_parse_from(["mmdr", "--size"]).unwrap();
+        assert!(args.size);
     }
 
     #[test]

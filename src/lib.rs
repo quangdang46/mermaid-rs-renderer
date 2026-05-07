@@ -118,7 +118,7 @@ pub use layout::{
 pub use parser::{ParseOutput, parse_mermaid};
 #[cfg(feature = "png")]
 pub use render::write_output_png;
-pub use render::{render_svg, write_output_svg};
+pub use render::{SvgDimensions, measure_svg_dimensions, render_svg, write_output_svg};
 pub use theme::Theme;
 
 /// Options for the high-level `render` function.
@@ -224,6 +224,29 @@ pub fn render_with_options(input: &str, options: RenderOptions) -> anyhow::Resul
     let layout = compute_layout(&parsed.graph, &options.theme, &options.layout);
     let svg = render_svg(&layout, &options.theme, &options.layout);
     Ok(svg)
+}
+
+/// Measure the SVG dimensions Mermaid would render with the given options.
+///
+/// This runs parse and layout, but does not allocate or serialize the full SVG.
+pub fn measure(input: &str, options: RenderOptions) -> anyhow::Result<SvgDimensions> {
+    measure_with_dimensions(input, options, None)
+}
+
+/// Measure dimensions with an optional explicit output image size override.
+///
+/// Passing `Some((width, height))` mirrors [`render::render_svg_with_dimensions`]
+/// and the `mmdr -w/-H` PNG path: `width`/`height` in the returned metadata are
+/// the final output canvas, while `viewbox_*` still describe the natural diagram
+/// coordinate system.
+pub fn measure_with_dimensions(
+    input: &str,
+    options: RenderOptions,
+    dimensions: Option<(f32, f32)>,
+) -> anyhow::Result<SvgDimensions> {
+    let parsed = parse_mermaid_strict(input)?;
+    let layout = compute_layout(&parsed.graph, &options.theme, &options.layout);
+    Ok(measure_svg_dimensions(&layout, &options.layout, dimensions))
 }
 
 /// Parse a Mermaid diagram with typed parser diagnostics.
@@ -409,6 +432,35 @@ mod tests {
         let opts = RenderOptions::modern().with_node_spacing(100.0);
         let svg = render_with_options("flowchart TD; X-->Y", opts).unwrap();
         assert!(svg.contains("<svg"));
+    }
+
+    #[test]
+    fn test_measure_matches_rendered_svg_dimensions() {
+        let input = "flowchart LR; A-->B-->C";
+        let opts = RenderOptions::default().with_preferred_aspect_ratio_parts(16.0, 9.0);
+        let measured = measure(input, opts.clone()).unwrap();
+        let svg = render_with_options(input, opts).unwrap();
+        let width = parse_svg_attr(&svg, "width").expect("width");
+        let height = parse_svg_attr(&svg, "height").expect("height");
+
+        assert!((measured.width - width).abs() < 0.001);
+        assert!((measured.height - height).abs() < 0.001);
+        assert!((measured.aspect_ratio() - (16.0 / 9.0)).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_measure_with_dimensions_reports_output_canvas_and_viewbox() {
+        let measured = measure_with_dimensions(
+            "flowchart TD; A-->B",
+            RenderOptions::default(),
+            Some((1400.0, 900.0)),
+        )
+        .unwrap();
+
+        assert_eq!(measured.width, 1400.0);
+        assert_eq!(measured.height, 900.0);
+        assert!(measured.viewbox_width > 0.0);
+        assert!(measured.viewbox_height > 0.0);
     }
 
     #[test]

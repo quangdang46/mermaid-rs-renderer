@@ -11,9 +11,30 @@ use crate::layout::{
 use crate::text_metrics;
 use crate::theme::{Theme, adjust_color, parse_color_to_hsl};
 use anyhow::Result;
+use serde::Serialize;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::Path;
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct SvgDimensions {
+    pub width: f32,
+    pub height: f32,
+    pub viewbox_x: f32,
+    pub viewbox_y: f32,
+    pub viewbox_width: f32,
+    pub viewbox_height: f32,
+}
+
+impl SvgDimensions {
+    pub fn aspect_ratio(self) -> f32 {
+        self.width / self.height.max(1.0)
+    }
+
+    pub fn viewbox_aspect_ratio(self) -> f32 {
+        self.viewbox_width / self.viewbox_height.max(1.0)
+    }
+}
 
 fn fit_dimensions_to_preferred_ratio(
     width: f32,
@@ -65,18 +86,11 @@ pub fn render_svg(layout: &Layout, theme: &Theme, config: &LayoutConfig) -> Stri
     render_svg_with_dimensions(layout, theme, config, None)
 }
 
-pub fn render_svg_with_dimensions(
+pub fn measure_svg_dimensions(
     layout: &Layout,
-    theme: &Theme,
     config: &LayoutConfig,
     dimensions: Option<(f32, f32)>,
-) -> String {
-    let mut svg = String::new();
-    let state_font_size = if layout.kind == crate::ir::DiagramKind::State {
-        theme.font_size * 0.85
-    } else {
-        theme.font_size
-    };
+) -> SvgDimensions {
     let is_sequence = matches!(layout.diagram, DiagramData::Sequence(_));
     let (width, height, viewbox_x, viewbox_y, viewbox_width, viewbox_height) =
         if let DiagramData::Error(error) = &layout.diagram {
@@ -163,6 +177,52 @@ pub fn render_svg_with_dimensions(
             let height = layout.height.max(1.0);
             (width, height, 0.0, 0.0, width, height)
         };
+
+    let preferred_ratio = config
+        .preferred_aspect_ratio
+        .filter(|ratio| ratio.is_finite() && *ratio > 0.0);
+    let (mut target_width, mut target_height) =
+        fit_dimensions_to_preferred_ratio(width, height, preferred_ratio);
+    if let Some((width, height)) = dimensions
+        && width.is_finite()
+        && height.is_finite()
+        && width > 0.0
+        && height > 0.0
+    {
+        target_width = width;
+        target_height = height;
+    }
+
+    SvgDimensions {
+        width: target_width,
+        height: target_height,
+        viewbox_x,
+        viewbox_y,
+        viewbox_width,
+        viewbox_height,
+    }
+}
+
+pub fn render_svg_with_dimensions(
+    layout: &Layout,
+    theme: &Theme,
+    config: &LayoutConfig,
+    dimensions: Option<(f32, f32)>,
+) -> String {
+    let mut svg = String::new();
+    let state_font_size = if layout.kind == crate::ir::DiagramKind::State {
+        theme.font_size * 0.85
+    } else {
+        theme.font_size
+    };
+    let SvgDimensions {
+        width: target_width,
+        height: target_height,
+        viewbox_x,
+        viewbox_y,
+        viewbox_width,
+        viewbox_height,
+    } = measure_svg_dimensions(layout, config, dimensions);
     let seq_data = if let DiagramData::Sequence(s) = &layout.diagram {
         Some(s)
     } else {
@@ -182,17 +242,6 @@ pub fn render_svg_with_dimensions(
     let preferred_ratio = config
         .preferred_aspect_ratio
         .filter(|ratio| ratio.is_finite() && *ratio > 0.0);
-    let (mut target_width, mut target_height) =
-        fit_dimensions_to_preferred_ratio(width, height, preferred_ratio);
-    if let Some((width, height)) = dimensions
-        && width.is_finite()
-        && height.is_finite()
-        && width > 0.0
-        && height > 0.0
-    {
-        target_width = width;
-        target_height = height;
-    }
 
     let mut width_attr = target_width.to_string();
     let mut height_attr = target_height.to_string();
@@ -983,7 +1032,9 @@ pub fn render_svg_with_dimensions(
             _ => 2.0,
         };
         for (edge_idx, edge) in layout.edges.iter().enumerate() {
-            let d = if layout.kind == crate::ir::DiagramKind::Mindmap && edge.points.len() > 2 {
+            let d = if layout.kind == crate::ir::DiagramKind::Flowchart && edge.points.len() > 2 {
+                rounded_polyline_path(&edge.points, 10.0)
+            } else if layout.kind == crate::ir::DiagramKind::Mindmap && edge.points.len() > 2 {
                 basis_curve_path(&edge.points)
             } else {
                 points_to_path(&edge.points)
@@ -1574,6 +1625,64 @@ fn points_to_path(points: &[(f32, f32)]) -> String {
     for (x, y) in deduped.iter().skip(1) {
         d.push_str(&format!(" L {:.3},{:.3}", x, y));
     }
+    d
+}
+
+/// Render a routed polyline with rounded interior corners.
+///
+/// Flowchart routing still produces orthogonal/polyline control points because the
+/// router needs explicit topology for obstacle avoidance, port validation, and
+/// edge-overlap scoring. This presentation helper only trims interior corners and
+/// inserts quadratic curves, leaving the first and last endpoint segments straight
+/// so arrowhead tangents stay aligned with the validated route.
+fn rounded_polyline_path(points: &[(f32, f32)], radius: f32) -> String {
+    let pts = dedupe_points(points);
+    if pts.len() <= 2 || radius <= 0.0 {
+        return points_to_path(&pts);
+    }
+
+    let mut d = format!("M {:.3},{:.3}", pts[0].0, pts[0].1);
+    for idx in 1..pts.len() - 1 {
+        let prev = pts[idx - 1];
+        let cur = pts[idx];
+        let next = pts[idx + 1];
+        let in_vec = (cur.0 - prev.0, cur.1 - prev.1);
+        let out_vec = (next.0 - cur.0, next.1 - cur.1);
+        let in_len = in_vec.0.hypot(in_vec.1);
+        let out_len = out_vec.0.hypot(out_vec.1);
+        if in_len <= 1e-3 || out_len <= 1e-3 {
+            continue;
+        }
+
+        let in_unit = (in_vec.0 / in_len, in_vec.1 / in_len);
+        let out_unit = (out_vec.0 / out_len, out_vec.1 / out_len);
+        let cross = in_unit.0 * out_unit.1 - in_unit.1 * out_unit.0;
+        let dot = in_unit.0 * out_unit.0 + in_unit.1 * out_unit.1;
+
+        // Do not curve straight-through points or near U-turns: those are either
+        // cleanup artifacts or tight route topology where a curve would imply a
+        // different path than the router validated.
+        if cross.abs() <= 1e-3 || dot < -0.95 {
+            d.push_str(&format!(" L {:.3},{:.3}", cur.0, cur.1));
+            continue;
+        }
+
+        let trim = radius.min(in_len * 0.45).min(out_len * 0.45);
+        if trim <= 0.5 {
+            d.push_str(&format!(" L {:.3},{:.3}", cur.0, cur.1));
+            continue;
+        }
+
+        let before = (cur.0 - in_unit.0 * trim, cur.1 - in_unit.1 * trim);
+        let after = (cur.0 + out_unit.0 * trim, cur.1 + out_unit.1 * trim);
+        d.push_str(&format!(
+            " L {:.3},{:.3} Q {:.3},{:.3} {:.3},{:.3}",
+            before.0, before.1, cur.0, cur.1, after.0, after.1
+        ));
+    }
+
+    let last = pts[pts.len() - 1];
+    d.push_str(&format!(" L {:.3},{:.3}", last.0, last.1));
     d
 }
 
@@ -6381,6 +6490,22 @@ mod tests {
             crate::edge_geometry::edge_endpoint_angle(&points, false),
             45.0
         );
+    }
+
+    #[test]
+    fn rounded_polyline_path_preserves_endpoints_and_rounds_interior_corner() {
+        let path = rounded_polyline_path(&[(0.0, 0.0), (40.0, 0.0), (40.0, 40.0)], 10.0);
+
+        assert!(path.starts_with("M 0.000,0.000 L 30.000,0.000"));
+        assert!(path.contains(" Q 40.000,0.000 40.000,10.000"));
+        assert!(path.ends_with(" L 40.000,40.000"));
+    }
+
+    #[test]
+    fn rounded_polyline_path_keeps_straight_segments_straight() {
+        let path = rounded_polyline_path(&[(0.0, 0.0), (20.0, 0.0), (40.0, 0.0)], 10.0);
+
+        assert_eq!(path, "M 0.000,0.000 L 20.000,0.000 L 40.000,0.000");
     }
 
     #[test]
