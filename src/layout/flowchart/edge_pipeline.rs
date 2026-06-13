@@ -2108,6 +2108,8 @@ pub(in crate::layout) struct RoutedEdgeBuildContext<'a> {
     pub(in crate::layout) stage_metrics: Option<&'a mut LayoutStageMetrics>,
 }
 
+
+
 pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> Vec<EdgeLayout> {
     let RoutedEdgeBuildContext {
         graph,
@@ -2628,9 +2630,14 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
         } else {
             0.0
         };
-        let preferred_label_center = if matches!(graph.kind, DiagramKind::State | DiagramKind::Er)
-            || graph.kind == DiagramKind::Flowchart
-        {
+        // Class/state/ER/flowchart labels are anchored onto the routed path
+        // afterwards, so the route must not be forced through a provisional
+        // label center: those centers are computed from pre-refinement ports
+        // and routing through them bends otherwise straight edges into hooks.
+        let preferred_label_center = if matches!(
+            graph.kind,
+            DiagramKind::State | DiagramKind::Er | DiagramKind::Flowchart | DiagramKind::Class
+        ) {
             None
         } else {
             preferred_label_plan.map(|plan| plan.center)

@@ -462,11 +462,18 @@ fn orient(a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> f32 {
     (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)
 }
 
-fn on_segment(a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> bool {
-    b.0 >= a.0.min(c.0) - POINT_EPS
-        && b.0 <= a.0.max(c.0) + POINT_EPS
-        && b.1 >= a.1.min(c.1) - POINT_EPS
-        && b.1 <= a.1.max(c.1) + POINT_EPS
+/// Whether point `p` lies within the bounding box of segment `a`-`b`.
+///
+/// Callers pair this with a collinearity (`orient`) check, so the bounding box
+/// test is sufficient for "point on segment". The epsilon must stay tiny:
+/// a loose epsilon makes distinct collinear segments on a shared axis line
+/// (such as straight chain edges) register as intersecting, which makes
+/// crossing-reduction passes bend perfectly straight routes.
+fn on_segment(a: (f32, f32), b: (f32, f32), p: (f32, f32)) -> bool {
+    p.0 >= a.0.min(b.0) - GEOM_EPS
+        && p.0 <= a.0.max(b.0) + GEOM_EPS
+        && p.1 >= a.1.min(b.1) - GEOM_EPS
+        && p.1 <= a.1.max(b.1) + GEOM_EPS
 }
 
 #[cfg(test)]

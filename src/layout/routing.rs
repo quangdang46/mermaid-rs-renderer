@@ -1367,18 +1367,22 @@ pub(super) fn path_coords_reasonable(points: &[(f32, f32)]) -> bool {
 }
 
 fn path_endpoint_intrusions(points: &[(f32, f32)], ctx: &RouteContext<'_>) -> usize {
-    if points.len() < 3 || ctx.from_id == ctx.to_id {
+    if points.len() < 2 || ctx.from_id == ctx.to_id {
         return 0;
     }
-    let last_segment_idx = points.len().saturating_sub(2);
+    // Candidate paths handed to the scorer start at `route_start` and end at
+    // `route_end`, which are already outside the endpoint nodes (the true port
+    // stubs are glued on later by `RouteEndpoints::finish`). No candidate
+    // segment may therefore legitimately pass through either endpoint node,
+    // so every segment is checked. Exempting the first/last segment here lets
+    // congestion-averse candidates tunnel back through their own source node
+    // for free, which later forces ugly orbit-shaped endpoint repairs.
     let mut hits = 0usize;
-    for (idx, segment) in points.windows(2).enumerate() {
-        if idx > 0 && segment_hits_node_shape_interior(segment[0], segment[1], ctx.from) {
+    for segment in points.windows(2) {
+        if segment_hits_node_shape_interior(segment[0], segment[1], ctx.from) {
             hits += 1;
         }
-        if idx < last_segment_idx
-            && segment_hits_node_shape_interior(segment[0], segment[1], ctx.to)
-        {
+        if segment_hits_node_shape_interior(segment[0], segment[1], ctx.to) {
             hits += 1;
         }
     }

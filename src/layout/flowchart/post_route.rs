@@ -31,6 +31,10 @@ pub(in crate::layout) fn apply_edge_path_cleanup(
         if graph.kind == DiagramKind::Er {
             deoverlap_flowchart_paths(graph, nodes, routed_points, config);
         }
+        // Rank-adjacent ports can differ by a fraction of a pixel on the cross
+        // axis, which turns visually straight connectors into two-bend doglegs.
+        // Collapse those near-axis-aligned paths the same way flowcharts do.
+        simplify_flowchart_axis_oscillations(routed_points);
     }
 }
 
