@@ -538,6 +538,10 @@ pub struct C4RelLayout {
     pub techn: Option<C4TextLayout>,
     pub start: (f32, f32),
     pub end: (f32, f32),
+    /// Full routed polyline including `start` and `end`. When the connector
+    /// must detour around an intervening shape this has interior waypoints;
+    /// for a clear straight connector it is just `[start, end]`.
+    pub waypoints: Vec<(f32, f32)>,
     pub offset_x: f32,
     pub offset_y: f32,
     pub line_color: Option<String>,

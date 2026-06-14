@@ -101,6 +101,8 @@ pub(super) fn compute_c4_layout(graph: &Graph, config: &LayoutConfig) -> Layout 
                 fast_metrics,
             )
         });
+        let waypoints =
+            c4_route_around_shapes(start, end, &rel.from, &rel.to, &shapes_out);
         rels_out.push(C4RelLayout {
             kind: rel.kind,
             from: rel.from.clone(),
@@ -109,6 +111,7 @@ pub(super) fn compute_c4_layout(graph: &Graph, config: &LayoutConfig) -> Layout 
             techn: techn_layout,
             start,
             end,
+            waypoints,
             offset_x: rel.offset_x,
             offset_y: rel.offset_y,
             line_color: rel.line_color.clone(),
@@ -152,7 +155,7 @@ pub(super) fn compute_c4_layout(graph: &Graph, config: &LayoutConfig) -> Layout 
             label_anchor: None,
             start_label_anchor: None,
             end_label_anchor: None,
-            points: vec![rel.start, rel.end],
+            points: rel.waypoints.clone(),
             directed: rel.kind != crate::ir::C4RelKind::BiRel,
             arrow_start: false,
             arrow_end: rel.kind != crate::ir::C4RelKind::BiRel,
@@ -758,6 +761,105 @@ fn c4_intersect_points(
     );
     let end = c4_intersect_point(to_node, start_center);
     (start, end)
+}
+
+/// Does the segment `a`-`b` pass through the axis-aligned rectangle `rect`,
+/// shrunk by `pad` on every side so a connector merely grazing the boundary is
+/// not treated as an intrusion?
+fn c4_segment_hits_rect(a: (f32, f32), b: (f32, f32), rect: &C4ShapeLayout, pad: f32) -> bool {
+    let min_x = rect.x + pad;
+    let min_y = rect.y + pad;
+    let max_x = rect.x + rect.width - pad;
+    let max_y = rect.y + rect.height - pad;
+    if max_x <= min_x || max_y <= min_y {
+        return false;
+    }
+    // Liang-Barsky segment/AABB clip.
+    let dx = b.0 - a.0;
+    let dy = b.1 - a.1;
+    let mut t0 = 0.0f32;
+    let mut t1 = 1.0f32;
+    let edges = [(-dx, a.0 - min_x), (dx, max_x - a.0), (-dy, a.1 - min_y), (dy, max_y - a.1)];
+    for (p, q) in edges {
+        if p.abs() < 1e-6 {
+            if q < 0.0 {
+                return false;
+            }
+        } else {
+            let r = q / p;
+            if p < 0.0 {
+                if r > t1 {
+                    return false;
+                }
+                if r > t0 {
+                    t0 = r;
+                }
+            } else {
+                if r < t0 {
+                    return false;
+                }
+                if r < t1 {
+                    t1 = r;
+                }
+            }
+        }
+    }
+    t0 <= t1
+}
+
+/// Route a C4 relationship connector from `start` to `end`, detouring around
+/// any unrelated shape the straight line would cut through. The detour is a
+/// single vertical jog above or below the obstacle band, whichever is shorter
+/// and itself clear, falling back to the straight line when no clear detour
+/// exists (keeping behaviour stable on dense diagrams).
+fn c4_route_around_shapes(
+    start: (f32, f32),
+    end: (f32, f32),
+    from_id: &str,
+    to_id: &str,
+    shapes: &[C4ShapeLayout],
+) -> Vec<(f32, f32)> {
+    let pad = 4.0;
+    let blockers: Vec<&C4ShapeLayout> = shapes
+        .iter()
+        .filter(|s| s.id != from_id && s.id != to_id)
+        .filter(|s| c4_segment_hits_rect(start, end, s, pad))
+        .collect();
+    if blockers.is_empty() {
+        return vec![start, end];
+    }
+
+    // Vertical extent of the obstacle band the straight line crosses.
+    let band_top = blockers
+        .iter()
+        .map(|s| s.y)
+        .fold(f32::INFINITY, f32::min);
+    let band_bottom = blockers
+        .iter()
+        .map(|s| s.y + s.height)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let clearance = 16.0;
+
+    for detour_y in [band_top - clearance, band_bottom + clearance] {
+        let candidate = vec![
+            start,
+            (start.0, detour_y),
+            (end.0, detour_y),
+            end,
+        ];
+        // Accept the detour only if none of its legs re-enter a blocker.
+        let clear = candidate.windows(2).all(|seg| {
+            !shapes
+                .iter()
+                .filter(|s| s.id != from_id && s.id != to_id)
+                .any(|s| c4_segment_hits_rect(seg[0], seg[1], s, pad))
+        });
+        if clear {
+            return candidate;
+        }
+    }
+    // No clear orthogonal detour found; keep the direct line.
+    vec![start, end]
 }
 
 fn c4_intersect_point(node: &C4ShapeLayout, end: (f32, f32)) -> (f32, f32) {

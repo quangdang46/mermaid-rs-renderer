@@ -4859,7 +4859,30 @@ fn render_c4_boundary(boundary: &C4BoundaryLayout, conf: &crate::config::C4Confi
 fn render_c4_rel(rel: &C4RelLayout, conf: &crate::config::C4Config, straight: bool) -> String {
     let mut svg = String::new();
     let stroke = rel.line_color.as_deref().unwrap_or(&conf.boundary_stroke);
-    if straight {
+    if rel.waypoints.len() > 2 {
+        // Connector detours around an intervening shape: draw the routed
+        // orthogonal polyline rather than a straight/curved 2-point line.
+        let mut d = format!("M{:.2},{:.2}", rel.waypoints[0].0, rel.waypoints[0].1);
+        for pt in &rel.waypoints[1..] {
+            d.push_str(&format!(" L{:.2},{:.2}", pt.0, pt.1));
+        }
+        let mut path = format!(
+            "<path fill=\"none\" stroke-width=\"1\" stroke=\"{}\" d=\"{}\"",
+            escape_xml(stroke),
+            d
+        );
+        if rel.kind != crate::ir::C4RelKind::RelBack {
+            path.push_str(" marker-end=\"url(#arrowhead)\"");
+        }
+        if matches!(
+            rel.kind,
+            crate::ir::C4RelKind::BiRel | crate::ir::C4RelKind::RelBack
+        ) {
+            path.push_str(" marker-start=\"url(#arrowend)\"");
+        }
+        path.push_str("/>");
+        svg.push_str(&path);
+    } else if straight {
         let mut attrs = String::new();
         if rel.kind != crate::ir::C4RelKind::RelBack {
             attrs.push_str(" marker-end=\"url(#arrowhead)\"");
