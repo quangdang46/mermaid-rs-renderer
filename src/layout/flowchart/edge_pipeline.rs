@@ -2121,8 +2121,6 @@ pub(in crate::layout) struct RoutedEdgeBuildContext<'a> {
     pub(in crate::layout) stage_metrics: Option<&'a mut LayoutStageMetrics>,
 }
 
-
-
 pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> Vec<EdgeLayout> {
     let RoutedEdgeBuildContext {
         graph,

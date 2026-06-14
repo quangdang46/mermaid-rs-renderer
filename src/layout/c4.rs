@@ -101,8 +101,7 @@ pub(super) fn compute_c4_layout(graph: &Graph, config: &LayoutConfig) -> Layout 
                 fast_metrics,
             )
         });
-        let waypoints =
-            c4_route_around_shapes(start, end, &rel.from, &rel.to, &shapes_out);
+        let waypoints = c4_route_around_shapes(start, end, &rel.from, &rel.to, &shapes_out);
         rels_out.push(C4RelLayout {
             kind: rel.kind,
             from: rel.from.clone(),
@@ -779,7 +778,12 @@ fn c4_segment_hits_rect(a: (f32, f32), b: (f32, f32), rect: &C4ShapeLayout, pad:
     let dy = b.1 - a.1;
     let mut t0 = 0.0f32;
     let mut t1 = 1.0f32;
-    let edges = [(-dx, a.0 - min_x), (dx, max_x - a.0), (-dy, a.1 - min_y), (dy, max_y - a.1)];
+    let edges = [
+        (-dx, a.0 - min_x),
+        (dx, max_x - a.0),
+        (-dy, a.1 - min_y),
+        (dy, max_y - a.1),
+    ];
     for (p, q) in edges {
         if p.abs() < 1e-6 {
             if q < 0.0 {
@@ -830,10 +834,7 @@ fn c4_route_around_shapes(
     }
 
     // Vertical extent of the obstacle band the straight line crosses.
-    let band_top = blockers
-        .iter()
-        .map(|s| s.y)
-        .fold(f32::INFINITY, f32::min);
+    let band_top = blockers.iter().map(|s| s.y).fold(f32::INFINITY, f32::min);
     let band_bottom = blockers
         .iter()
         .map(|s| s.y + s.height)
@@ -841,12 +842,7 @@ fn c4_route_around_shapes(
     let clearance = 16.0;
 
     for detour_y in [band_top - clearance, band_bottom + clearance] {
-        let candidate = vec![
-            start,
-            (start.0, detour_y),
-            (end.0, detour_y),
-            end,
-        ];
+        let candidate = vec![start, (start.0, detour_y), (end.0, detour_y), end];
         // Accept the detour only if none of its legs re-enter a blocker.
         let clear = candidate.windows(2).all(|seg| {
             !shapes

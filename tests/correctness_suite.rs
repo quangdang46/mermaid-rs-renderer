@@ -117,7 +117,8 @@ fn check_finite_numbers(fixture: &str, svg: &str, findings: &mut Vec<Finding>) {
 /// (space, comma, or a path command letter), so it represents a coordinate
 /// rather than a substring of a word.
 fn attribute_contains_numeric_token(svg: &str, token: &str) -> bool {
-    let is_boundary = |c: char| c.is_whitespace() || c == ',' || c.is_ascii_alphabetic() || c == '(';
+    let is_boundary =
+        |c: char| c.is_whitespace() || c == ',' || c.is_ascii_alphabetic() || c == '(';
     let mut search_from = 0;
     while let Some(rel) = svg[search_from..].find("=\"") {
         let start = search_from + rel + 2;
@@ -283,8 +284,7 @@ fn label_tokens(label: &str) -> Vec<String> {
     for tag in ["**", "<i>", "</i>", "<b>", "</b>", "<em>", "</em>", "`"] {
         work = work.replace(tag, "");
     }
-    work
-        .split('\u{1}')
+    work.split('\u{1}')
         .map(normalize_label)
         .filter(|t| !t.is_empty())
         .collect()
@@ -343,12 +343,7 @@ fn is_synthetic_node_id(id: &str) -> bool {
 /// This is the core "no dropped content" guarantee. We skip diagram kinds
 /// whose textual content is structural rather than graph-node based and is
 /// verified by per-type suites later (pie/gantt/xychart/etc.).
-fn check_label_parity(
-    fixture: &str,
-    graph: &Graph,
-    svg: &str,
-    findings: &mut Vec<Finding>,
-) {
+fn check_label_parity(fixture: &str, graph: &Graph, svg: &str, findings: &mut Vec<Finding>) {
     // Only graph-shaped kinds carry node/edge labels in `graph.nodes`.
     let graph_shaped = matches!(
         graph.kind,
@@ -502,8 +497,9 @@ fn every_fixture_renders_validly_and_preserves_content() {
 fn label_parity_flags_a_dropped_node_label() {
     // Render text is missing the node label "Charlie" entirely.
     let text_norm = "Alice Bob";
-    let raw: BTreeSet<String> =
-        ["Alice".to_string(), "Bob".to_string()].into_iter().collect();
+    let raw: BTreeSet<String> = ["Alice".to_string(), "Bob".to_string()]
+        .into_iter()
+        .collect();
     assert!(text_contains_label(text_norm, &raw, "Alice", false));
     assert!(
         !text_contains_label(text_norm, &raw, "Charlie", false),
@@ -524,7 +520,12 @@ fn label_parity_accepts_wrapped_and_compartment_labels() {
     .into_iter()
     .collect();
     // Wrapped edge label split across two rows.
-    assert!(text_contains_label(text_norm, &raw, "Set cookie &\nreturn 200", false));
+    assert!(text_contains_label(
+        text_norm,
+        &raw,
+        "Set cookie &\nreturn 200",
+        false
+    ));
     // Class/ER attribute row rendered as separate column cells.
     assert!(text_contains_label(text_norm, &raw, "string id", true));
     // Missing attribute is still caught even in table mode.
@@ -545,7 +546,11 @@ fn finite_number_check_flags_nan_attribute() {
 #[test]
 fn viewbox_check_flags_nonpositive_size() {
     let mut findings = Vec::new();
-    check_viewbox("synthetic", r#"<svg viewBox="0 0 0 100"></svg>"#, &mut findings);
+    check_viewbox(
+        "synthetic",
+        r#"<svg viewBox="0 0 0 100"></svg>"#,
+        &mut findings,
+    );
     assert!(findings.iter().any(|f| f.rule == "viewbox-positive"));
 }
 

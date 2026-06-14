@@ -19,7 +19,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use mermaid_rs_renderer::config::LayoutConfig;
-use mermaid_rs_renderer::layout::{compute_layout, Layout};
+use mermaid_rs_renderer::layout::{Layout, compute_layout};
 use mermaid_rs_renderer::parser::parse_mermaid;
 use mermaid_rs_renderer::render::render_svg;
 use mermaid_rs_renderer::theme::Theme;
@@ -45,7 +45,11 @@ fn collect_mmd(dir: &Path, out: &mut Vec<PathBuf>) {
 fn corpus() -> Vec<PathBuf> {
     let root = repo_root();
     let mut out = Vec::new();
-    for sub in ["tests/fixtures", "docs/comparison_sources", "benches/fixtures"] {
+    for sub in [
+        "tests/fixtures",
+        "docs/comparison_sources",
+        "benches/fixtures",
+    ] {
         collect_mmd(&root.join(sub), &mut out);
     }
     out.sort();
@@ -105,12 +109,18 @@ fn rendering_is_deterministic_for_every_fixture() {
             continue;
         };
         if svg_a != svg_b {
-            failures.push(format!("{}: SVG not byte-identical across runs", fixture_name(&path)));
+            failures.push(format!(
+                "{}: SVG not byte-identical across runs",
+                fixture_name(&path)
+            ));
         }
         let sig_a = layout_signature(&layout_a);
         let sig_b = layout_signature(&layout_b);
         if sig_a != sig_b {
-            failures.push(format!("{}: layout geometry differs across runs", fixture_name(&path)));
+            failures.push(format!(
+                "{}: layout geometry differs across runs",
+                fixture_name(&path)
+            ));
         }
     }
     assert!(
