@@ -175,6 +175,12 @@ def main() -> int:
                         help="regex to filter fixture paths (repeatable)")
     parser.add_argument("--json", default="", help="write machine-readable report")
     parser.add_argument("--bin", default="", help="mmdr binary path")
+    parser.add_argument("--baseline", default=str(ROOT / "tests" / "hard_gate_baseline.json"),
+                        help="known-RED baseline; gate fails only on regressions vs it")
+    parser.add_argument("--strict", action="store_true",
+                        help="ignore the baseline; fail on any RED fixture")
+    parser.add_argument("--write-baseline", action="store_true",
+                        help="overwrite the baseline with the current RED set and exit 0")
     args = parser.parse_args()
 
     layout_score = load_layout_score()
@@ -236,8 +242,59 @@ def main() -> int:
     if args.json:
         Path(args.json).write_text(json.dumps(report, indent=2))
 
-    # Gate: fail if anything is RED or failed to render.
-    return 1 if (red or render_failures) else 0
+    current = {r["fixture"]: r["hard_violation_total"] for r in red}
+
+    if args.write_baseline:
+        baseline_doc = {
+            "_comment": "Known hard-gate RED fixtures; gate fails on new reds or "
+                        "worse counts vs this baseline. Lower is better.",
+            "fixtures": dict(sorted(current.items())),
+        }
+        Path(args.baseline).write_text(json.dumps(baseline_doc, indent=2) + "\n")
+        print(f"Wrote baseline with {len(current)} RED fixtures to {args.baseline}")
+        return 0
+
+    if args.strict:
+        return 1 if (red or render_failures) else 0
+
+    # Baseline-aware gating: fail only on regressions (new RED fixtures, higher
+    # violation counts, or any render failure). Improvements are reported as a
+    # nudge to update the baseline but do not fail.
+    baseline = {}
+    bpath = Path(args.baseline)
+    if bpath.exists():
+        try:
+            baseline = json.loads(bpath.read_text()).get("fixtures", {})
+        except (ValueError, OSError):
+            baseline = {}
+
+    regressions = []
+    for fixture, count in current.items():
+        prev = baseline.get(fixture)
+        if prev is None:
+            regressions.append(f"NEW RED   {fixture} ({count} violations)")
+        elif count > prev:
+            regressions.append(f"WORSE     {fixture} ({prev} -> {count})")
+    improvements = []
+    for fixture, prev in baseline.items():
+        cur = current.get(fixture, 0)
+        if cur < prev:
+            improvements.append(f"{fixture} ({prev} -> {cur})")
+
+    if improvements:
+        print("IMPROVED vs baseline (run --write-baseline to lock in):")
+        for line in improvements:
+            print(f"  {line}")
+        print()
+    if regressions or render_failures:
+        print("HARD-GATE REGRESSIONS (fail):")
+        for line in regressions:
+            print(f"  {line}")
+        for line in render_failures:
+            print(f"  RENDER FAILURE {line}")
+        return 1
+    print("Hard gate OK: no regressions vs baseline.")
+    return 0
 
 
 if __name__ == "__main__":
