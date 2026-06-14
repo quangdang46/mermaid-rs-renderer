@@ -38,6 +38,13 @@ pub struct EdgeDump {
     pub directed: bool,
     pub arrow_start: bool,
     pub arrow_end: bool,
+    /// Arrowhead kind at the start/end, when one is present. Used by scoring
+    /// to account for the marker inset (e.g. the class inheritance triangle
+    /// pulls the path endpoint back from the node boundary).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arrow_start_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arrow_end_kind: Option<String>,
     pub points: Vec<[f32; 2]>,
 }
 
@@ -82,6 +89,8 @@ impl LayoutDump {
                 directed: edge.directed,
                 arrow_start: edge.arrow_start,
                 arrow_end: edge.arrow_end,
+                arrow_start_kind: edge.arrow_start_kind.map(|k| format!("{k:?}")),
+                arrow_end_kind: edge.arrow_end_kind.map(|k| format!("{k:?}")),
                 points: edge.points.iter().map(|(x, y)| [*x, *y]).collect(),
             })
             .collect();

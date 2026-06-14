@@ -228,6 +228,139 @@ def point_rect_boundary_distance(point, node):
     return math.hypot(px - cx, py - cy)
 
 
+# Shapes whose drawn outline is inscribed within the bounding rect, so an edge
+# endpoint that correctly touches the visible boundary lies *inside* the rect.
+# For these, rect-edge distance wrongly reports the endpoint as off-boundary;
+# we measure distance to the actual outline instead.
+_INSCRIBED_SHAPES = {
+    "Diamond",
+    "Circle",
+    "DoubleCircle",
+    "Hexagon",
+    "Cylinder",
+    "Parallelogram",
+    "ParallelogramAlt",
+    "Trapezoid",
+    "TrapezoidAlt",
+    "Asymmetric",
+    "Stadium",
+}
+
+
+def _shape_polygon(node):
+    """Approximate outline polygon for the node's shape, matching the renderer's
+    `shape_polygon_points`. Returns None for shapes handled analytically
+    (circles) or unknown shapes (caller falls back to rect)."""
+    x = node["x"]
+    y = node["y"]
+    w = node["width"]
+    h = node["height"]
+    shape = node.get("shape", "Rectangle")
+    if shape == "Diamond":
+        cx, cy = x + w / 2.0, y + h / 2.0
+        return [(cx, y), (x + w, cy), (cx, y + h), (x, cy)]
+    if shape == "Hexagon":
+        x1, x2 = x + w * 0.25, x + w * 0.75
+        ym = y + h / 2.0
+        return [(x1, y), (x2, y), (x + w, ym), (x2, y + h), (x1, y + h), (x, ym)]
+    if shape in ("Parallelogram", "ParallelogramAlt"):
+        off = w * 0.18
+        if shape == "Parallelogram":
+            return [(x + off, y), (x + w, y), (x + w - off, y + h), (x, y + h)]
+        return [(x, y), (x + w - off, y), (x + w, y + h), (x + off, y + h)]
+    if shape in ("Trapezoid", "TrapezoidAlt"):
+        off = w * 0.18
+        if shape == "Trapezoid":
+            return [(x + off, y), (x + w - off, y), (x + w, y + h), (x, y + h)]
+        return [(x, y), (x + w, y), (x + w - off, y + h), (x + off, y + h)]
+    if shape == "Asymmetric":
+        slant = w * 0.22
+        return [
+            (x, y),
+            (x + w - slant, y),
+            (x + w, y + h / 2.0),
+            (x + w - slant, y + h),
+            (x, y + h),
+        ]
+    return None
+
+
+def _point_polyline_distance(point, polygon):
+    best = float("inf")
+    n = len(polygon)
+    for i in range(n):
+        a = polygon[i]
+        b = polygon[(i + 1) % n]
+        best = min(best, point_segment_distance(point, a, b))
+    return best
+
+
+# Per-diagram arrowhead/marker insets: how far an edge path endpoint is
+# legitimately pulled back from the node boundary to leave room for a marker.
+# Class diagrams inset by the largest amount (the hollow inheritance triangle).
+# Mirrors `src/edge_geometry.rs::arrowhead_inset`.
+_CLASS_ARROW_INSET = {
+    "OpenTriangle": 17.0,
+    "ClassDependency": 5.0,
+    None: 4.0,
+}
+
+
+def endpoint_boundary_tolerance(data, edge, which):
+    """Allowed distance from a node boundary for an edge endpoint.
+
+    Base tolerance is small (endpoints must sit on the boundary). When the
+    endpoint carries an arrowhead/marker, the renderer insets the path to make
+    room for it, so the tolerance is raised by that marker's inset. This keeps
+    the off-boundary check honest about *visual* boundary contact rather than
+    flagging the deliberately-inset path endpoint.
+    """
+    base = 1.5
+    kind = str(data.get("kind", "")).strip().lower()
+    if kind != "class":
+        return base
+    # `which` is "start" or "end"; class inheritance markers live at arrow_start.
+    has_arrow = edge.get("arrow_start") if which == "start" else edge.get("arrow_end")
+    if not has_arrow:
+        return base
+    arrow_kind = (
+        edge.get("arrow_start_kind") if which == "start" else edge.get("arrow_end_kind")
+    )
+    inset = _CLASS_ARROW_INSET.get(arrow_kind, _CLASS_ARROW_INSET[None])
+    # A small slack on top of the exact inset for rounding.
+    return base + inset + 1.0
+
+
+def point_shape_boundary_distance(point, node):
+    """Distance from `point` to the node's *drawn* outline, shape-aware.
+
+    For rectangles (and stadiums, which are rounded rects close enough for this
+    tolerance check) this is the rect-edge distance. For inscribed shapes
+    (diamond/circle/hexagon/...) it is distance to the actual outline, so an
+    endpoint correctly placed on a diamond's slanted edge is not falsely
+    reported as off-boundary."""
+    shape = node.get("shape", "Rectangle")
+    if shape in ("Circle", "DoubleCircle"):
+        cx = node["x"] + node["width"] / 2.0
+        cy = node["y"] + node["height"] / 2.0
+        rx = max(node["width"] / 2.0, 1e-6)
+        ry = max(node["height"] / 2.0, 1e-6)
+        px, py = point
+        # Distance from point to axis-aligned ellipse, scaled approximation.
+        nx = (px - cx) / rx
+        ny = (py - cy) / ry
+        norm = math.hypot(nx, ny)
+        if norm < 1e-9:
+            return min(rx, ry)
+        # Closest point on unit circle, mapped back, then Euclidean distance.
+        closest = (cx + (nx / norm) * rx, cy + (ny / norm) * ry)
+        return math.hypot(px - closest[0], py - closest[1])
+    poly = _shape_polygon(node)
+    if poly is not None:
+        return _point_polyline_distance(point, poly)
+    return point_rect_boundary_distance(point, node)
+
+
 def segment_rect_overlap_length(a, b, rect, eps=1e-9):
     x, y, w, h = rect
     x1, y1 = a
@@ -677,10 +810,10 @@ def compute_metrics(data, nodes, edges):
                 port_counts[from_id][side] += 1
             tol = max(1.0, min(from_node["width"], from_node["height"]) * 0.04)
             from_side_eval = infer_side(from_node, points[0], tol=tol)
-            boundary_error = point_rect_boundary_distance(points[0], from_node)
+            boundary_error = point_shape_boundary_distance(points[0], from_node)
             endpoint_boundary_error_sum += boundary_error
             endpoint_boundary_error_count += 1
-            if boundary_error > 1.5:
+            if boundary_error > endpoint_boundary_tolerance(data, edge, "start"):
                 endpoint_off_boundary_count += 1
 
             exit_side = dominant_axis_side(
@@ -698,10 +831,10 @@ def compute_metrics(data, nodes, edges):
                 port_counts[to_id][side] += 1
             tol = max(1.0, min(to_node["width"], to_node["height"]) * 0.04)
             to_side_eval = infer_side(to_node, points[-1], tol=tol)
-            boundary_error = point_rect_boundary_distance(points[-1], to_node)
+            boundary_error = point_shape_boundary_distance(points[-1], to_node)
             endpoint_boundary_error_sum += boundary_error
             endpoint_boundary_error_count += 1
-            if boundary_error > 1.5:
+            if boundary_error > endpoint_boundary_tolerance(data, edge, "end"):
                 endpoint_off_boundary_count += 1
 
             enter_side = dominant_axis_side(
