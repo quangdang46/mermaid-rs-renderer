@@ -35,3 +35,17 @@ jobs:
             --all-features \
             --locked \
             --no-run
+
+  layout-quality-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Build renderer
+        run: cargo build --release --features cli
+      - name: Hard-gate (no new geometry violations vs baseline)
+        run: python3 scripts/hard_gate.py
