@@ -1064,7 +1064,11 @@ pub(super) fn compute_mindmap_layout(
             to_layout.y + to_layout.height / 2.0,
         );
         let mut override_style = crate::ir::EdgeStyleOverride::default();
-        if let Some(child_info) = info_map.get(&edge.to)
+        if let Some(edge_color) = &config.mindmap.edge_color {
+            // Config override (mindmap.edgeColor): force one stroke color for
+            // every mindmap edge, independent of the node/section palette.
+            override_style.stroke = Some(edge_color.clone());
+        } else if let Some(child_info) = info_map.get(&edge.to)
             && let Some(section) = child_info.section
         {
             let index = section + 1;

@@ -38,6 +38,7 @@ use journey::*;
 use kanban::*;
 use mindmap::*;
 use pie::*;
+pub(crate) use pie::{pie_label_is_outside, pie_outside_label_bump, pie_outside_label_pad_x};
 use quadrant::*;
 use radar::*;
 use routing::*;

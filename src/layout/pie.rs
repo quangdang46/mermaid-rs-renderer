@@ -14,6 +14,32 @@ fn pie_palette(theme: &Theme) -> Vec<String> {
     theme.pie_colors.to_vec()
 }
 
+/// Shared geometry for pie percent/category labels that are rendered outside
+/// the pie (small slices). The layout (which reserves horizontal space so
+/// outside labels never overlap the legend or clip at the edges) and the
+/// renderer (which draws the labels) must agree on these values, so they live
+/// in one place. See issue #69 where the two sides used different formulas and
+/// the "Rats" label overlapped the legend.
+pub(crate) fn pie_outside_label_bump(font_size: f32, radius: f32) -> f32 {
+    (font_size * 1.6).max(radius * 0.18)
+}
+
+/// Horizontal padding of the outside-label background rect.
+pub(crate) fn pie_outside_label_pad_x(font_size: f32) -> f32 {
+    (font_size * 0.35).max(4.0)
+}
+
+/// Whether a slice's percent label has to be moved outside the pie.
+pub(crate) fn pie_label_is_outside(arc_len: f32, percent_width: f32, span: f32) -> bool {
+    arc_len < percent_width * 1.35 || span < 0.4
+}
+
+/// Horizontal extent of an outside label measured from the pie center,
+/// including the label background rect padding.
+pub(crate) fn pie_outside_label_extent(radius: f32, font_size: f32, label_width: f32) -> f32 {
+    radius + pie_outside_label_bump(font_size, radius) + label_width + pie_outside_label_pad_x(font_size)
+}
+
 fn sanitize_pie_value(value: f32) -> f32 {
     if value.is_finite() {
         value.max(0.0)
@@ -151,10 +177,13 @@ pub(super) fn compute_pie_layout(graph: &Graph, theme: &Theme, config: &LayoutCo
     let height = pie_cfg.height.max(1.0);
     let pie_width = height;
     let radius = (pie_width.min(height) / 2.0 - pie_cfg.margin).max(1.0);
-    let center_x = pie_width / 2.0;
+    let mut center_x = pie_width / 2.0;
     let center_y = height / 2.0;
     let suppress_outside_labels = graph.pie_slices.len() >= 4;
-    let mut right_outside_label_width: f32 = 0.0;
+    // Extents (from the pie center) of outside labels on each side, using the
+    // same formulas as the renderer so reserved space matches drawn pixels.
+    let mut right_outside_extent: f32 = 0.0;
+    let mut left_outside_extent: f32 = 0.0;
     if !suppress_outside_labels {
         for slice in &slices {
             let span = (slice.end_angle - slice.start_angle).abs();
@@ -169,19 +198,38 @@ pub(super) fn compute_pie_layout(graph: &Graph, theme: &Theme, config: &LayoutCo
             )
             .unwrap_or(percent_text.chars().count() as f32 * theme.pie_section_text_size * 0.55);
             let arc_len = radius * span;
-            let outside = arc_len < percent_width * 1.35 || span < 0.4;
+            let outside = pie_label_is_outside(arc_len, percent_width, span);
+            if !outside {
+                continue;
+            }
+            let extent = pie_outside_label_extent(
+                radius,
+                theme.pie_section_text_size,
+                slice.label.width,
+            );
             let mid_angle = (slice.start_angle + slice.end_angle) / 2.0;
-            if outside && mid_angle.cos() >= 0.0 {
-                right_outside_label_width = right_outside_label_width.max(slice.label.width);
+            if mid_angle.cos() >= 0.0 {
+                right_outside_extent = right_outside_extent.max(extent);
+            } else {
+                left_outside_extent = left_outside_extent.max(extent);
             }
         }
     }
-    let outside_label_clearance = if right_outside_label_width > 0.0 {
-        right_outside_label_width + pie_cfg.margin * 0.35
-    } else {
-        0.0
-    };
-    let legend_x = center_x + radius + pie_cfg.margin * 0.6 + outside_label_clearance;
+
+    // Shift the pie right when left-side outside labels or a wide (e.g. CJK)
+    // title would otherwise clip at x = 0 (issue #112).
+    let title_half_width = title_block
+        .as_ref()
+        .map(|text| text.width / 2.0)
+        .unwrap_or(0.0);
+    let left_needed = (left_outside_extent + pie_cfg.margin * 0.35)
+        .max(title_half_width + pie_cfg.margin * 0.25);
+    let left_shift = (left_needed - center_x).max(0.0);
+    center_x += left_shift;
+
+    let legend_x = center_x
+        + (radius + pie_cfg.margin * 0.6)
+            .max(right_outside_extent + pie_cfg.margin * 0.35);
 
     for (idx, (label, color)) in legend_items.into_iter().enumerate() {
         let vertical = idx as f32 * legend_item_height - legend_offset;
@@ -195,11 +243,13 @@ pub(super) fn compute_pie_layout(graph: &Graph, theme: &Theme, config: &LayoutCo
         });
     }
 
-    let width = legend_x
+    let width = (legend_x
         + pie_cfg.legend_rect_size
         + pie_cfg.legend_spacing
         + legend_width
-        + pie_cfg.margin * 0.4;
+        + pie_cfg.margin * 0.4)
+        // A wide title (e.g. CJK, issue #112) must also fit in the viewbox.
+        .max(center_x + title_half_width + pie_cfg.margin * 0.25);
     let title_layout = title_block.map(|text| PieTitleLayout {
         x: center_x,
         y: center_y - (height - 50.0) / 2.0,

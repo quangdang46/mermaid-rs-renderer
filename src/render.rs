@@ -3098,7 +3098,8 @@ fn render_pie(pie: &PieData, theme: &Theme, config: &LayoutConfig) -> String {
         let percent_width =
             text_metrics::measure_text_width(&percent_text, font_size, theme.font_family.as_str())
                 .unwrap_or(percent_text.chars().count() as f32 * font_size * 0.55);
-        let outside = !suppress_outside_labels && (arc_len < percent_width * 1.35 || span < 0.4);
+        let outside = !suppress_outside_labels
+            && crate::layout::pie_label_is_outside(arc_len, percent_width, span);
         let label_text = if outside {
             slice.label.lines.join(" ")
         } else {
@@ -3106,7 +3107,7 @@ fn render_pie(pie: &PieData, theme: &Theme, config: &LayoutConfig) -> String {
         };
         let edge_x = cx + radius * mid_angle.cos();
         let edge_y = cy + radius * mid_angle.sin();
-        let bump = (font_size * 1.6).max(radius * 0.18);
+        let bump = crate::layout::pie_outside_label_bump(font_size, radius);
         let (label_x, label_y) = if outside {
             (
                 cx + (radius + bump) * mid_angle.cos(),
@@ -3186,7 +3187,7 @@ fn render_pie(pie: &PieData, theme: &Theme, config: &LayoutConfig) -> String {
         let mut anchor = "middle";
         let mut label_x = label.x;
         if label.outside {
-            let bump = (label.font_size * 1.6).max(radius * 0.18);
+            let bump = crate::layout::pie_outside_label_bump(label.font_size, radius);
             if label.side >= 0 {
                 label_x = cx + radius + bump;
                 anchor = "start";
@@ -3214,7 +3215,7 @@ fn render_pie(pie: &PieData, theme: &Theme, config: &LayoutConfig) -> String {
                 theme.font_family.as_str(),
             )
             .unwrap_or(label.text.chars().count() as f32 * label.font_size * 0.55);
-            let pad_x = (label.font_size * 0.35).max(4.0);
+            let pad_x = crate::layout::pie_outside_label_pad_x(label.font_size);
             let pad_y = (label.font_size * 0.25).max(2.5);
             let rect_w = label_width + pad_x * 2.0;
             let rect_h = label.font_size + pad_y * 2.0;
