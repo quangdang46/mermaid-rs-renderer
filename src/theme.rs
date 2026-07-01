@@ -81,7 +81,8 @@ impl Theme {
     pub fn mermaid_default() -> Self {
         let primary_color = "#ECECFF".to_string();
         let secondary_color = "#FFFFDE".to_string();
-        let tertiary_color = "#ECECFF".to_string();
+        // mermaid-js theme-default.js: tertiaryColor = adjust(primaryColor, { h: -160 })
+        let tertiary_color = adjust_color(&primary_color, -160.0, 0.0, 0.0);
         let pie_colors = default_pie_colors(&primary_color, &secondary_color, &tertiary_color);
         Self {
             font_family: "'trebuchet ms', verdana, arial, \"DejaVu Sans\", \"Liberation Sans\", sans-serif, \"Noto Color Emoji\", \"Apple Color Emoji\", \"Segoe UI Emoji\"".to_string(),
@@ -178,20 +179,25 @@ impl Theme {
     }
 }
 
+/// Derive the 12-color pie palette the same way mermaid-js `theme-default.js`
+/// derives `pie1..pie12` from the base colors. Unlike the previous
+/// implementation this never yields duplicate slice colors when the tertiary
+/// color equals the primary color (issue #69: "Dogs" and "Rats" rendered with
+/// the same fill).
 fn default_pie_colors(primary: &str, secondary: &str, tertiary: &str) -> [String; 12] {
     [
         primary.to_string(),
         secondary.to_string(),
-        tertiary.to_string(),
+        adjust_color(tertiary, 0.0, 0.0, -40.0),
         adjust_color(primary, 0.0, 0.0, -10.0),
-        adjust_color(secondary, 0.0, 0.0, -10.0),
-        adjust_color(tertiary, 0.0, 0.0, -10.0),
-        adjust_color(primary, 60.0, 0.0, -10.0),
-        adjust_color(primary, -60.0, 0.0, -10.0),
-        adjust_color(primary, 120.0, 0.0, 0.0),
+        adjust_color(secondary, 0.0, 0.0, -30.0),
+        adjust_color(tertiary, 0.0, 0.0, -20.0),
         adjust_color(primary, 60.0, 0.0, -20.0),
-        adjust_color(primary, -60.0, 0.0, -20.0),
-        adjust_color(primary, 120.0, 0.0, -10.0),
+        adjust_color(primary, -60.0, 0.0, -40.0),
+        adjust_color(primary, 120.0, 0.0, -40.0),
+        adjust_color(primary, 60.0, 0.0, -40.0),
+        adjust_color(primary, -90.0, 0.0, -40.0),
+        adjust_color(primary, 120.0, 0.0, -30.0),
     ]
 }
 
