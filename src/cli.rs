@@ -1,4 +1,4 @@
-use crate::config::{Config, load_config};
+use crate::config::{Config, load_config_with_theme};
 use crate::layout::compute_layout_with_metrics;
 use crate::layout_dump::write_layout_dump;
 use crate::parser::parse_mermaid;
@@ -32,6 +32,11 @@ pub struct Args {
     /// Config JSON file (Mermaid-like themeVariables)
     #[arg(short = 'c', long = "configFile")]
     pub config: Option<PathBuf>,
+
+    /// Built-in theme preset (default, dark, forest, neutral, modern).
+    /// Applied before config-file/init themeVariables overrides.
+    #[arg(short = 't', long = "theme")]
+    pub theme: Option<String>,
 
     /// Width
     #[arg(short = 'w', long = "width", default_value_t = 1200.0)]
@@ -136,7 +141,7 @@ fn parse_aspect_ratio_json(value: &serde_json::Value) -> Option<f32> {
 
 pub fn run() -> Result<()> {
     let args = Args::parse();
-    let mut base_config = load_config(args.config.as_deref())?;
+    let mut base_config = load_config_with_theme(args.config.as_deref(), args.theme.as_deref())?;
     base_config.render.width = args.width;
     base_config.render.height = args.height;
     if let Some(ratio) = args.preferred_aspect_ratio {
@@ -555,12 +560,10 @@ sequenceDiagram
 }
 
 fn merge_init_config(mut config: Config, init: serde_json::Value) -> Config {
-    if let Some(theme_name) = init.get("theme").and_then(|v| v.as_str()) {
-        if theme_name == "modern" {
-            config.theme = crate::theme::Theme::modern();
-        } else if theme_name == "base" || theme_name == "default" || theme_name == "mermaid" {
-            config.theme = crate::theme::Theme::mermaid_default();
-        }
+    if let Some(theme_name) = init.get("theme").and_then(|v| v.as_str())
+        && let Some(theme) = crate::theme::Theme::from_name(theme_name)
+    {
+        config.theme = theme;
     }
     if let Some(theme_vars) = init.get("themeVariables") {
         let tag_label_border_explicit = theme_vars

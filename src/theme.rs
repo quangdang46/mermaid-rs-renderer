@@ -177,6 +177,262 @@ impl Theme {
             pie_opacity: 0.85,
         }
     }
+
+    /// Mermaid `dark` theme, ported from mermaid-js `theme-dark.js`.
+    /// Base colors: background #333, primaryColor #1f2020, with derived
+    /// values precomputed (khroma lighten/invert/adjust equivalents).
+    pub fn dark() -> Self {
+        let primary_color = "#1f2020".to_string();
+        // lighten(primary, 16)
+        let secondary_color = "#474949".to_string();
+        // adjust(primary, { h: -160 })
+        let tertiary_color = "#201f1f".to_string();
+        // theme-dark.js overrides cScale1..12 with a fixed dark palette and
+        // maps pie1..pie12 straight onto it.
+        let pie_colors = [
+            "#0b0000", "#4d1037", "#3f5258", "#4f2f1b", "#6e0a0a", "#3b0048", "#995a01",
+            "#154706", "#161722", "#00296f", "#01629c", "#010029",
+        ]
+        .map(|value| value.to_string());
+        let git_colors = [
+            // git0 = lighten(secondary, 20); git1..7 = lighten(cScale2.., 10-20)
+            "#797d7d", "#a12273", "#6a8993", "#9b5c35", "#cc1212", "#65007b", "#cc7801",
+            "#31a50e",
+        ]
+        .map(|value| value.to_string());
+        let git_inv_colors = [
+            "#868282", "#5edd8c", "#95766c", "#64a3ca", "#33eded", "#9aff84", "#3387fe",
+            "#ce5af1",
+        ]
+        .map(|value| value.to_string());
+        Self {
+            font_family: "'trebuchet ms', verdana, arial, \"DejaVu Sans\", \"Liberation Sans\", sans-serif, \"Noto Color Emoji\", \"Apple Color Emoji\", \"Segoe UI Emoji\"".to_string(),
+            font_size: 16.0,
+            primary_color,
+            // invert(primaryColor)
+            primary_text_color: "#e0dfdf".to_string(),
+            // invert(background)
+            primary_border_color: "#cccccc".to_string(),
+            // mainContrastColor
+            line_color: "lightgrey".to_string(),
+            secondary_color: secondary_color.clone(),
+            tertiary_color,
+            // lighten(labelBackground #181818, 25)
+            edge_label_background: "#585858".to_string(),
+            cluster_background: "#302f3d".to_string(),
+            // border2 = rgba(255,255,255,0.25)
+            cluster_border: "rgba(255, 255, 255, 0.25)".to_string(),
+            background: "#333333".to_string(),
+            sequence_actor_fill: "#1f2020".to_string(),
+            sequence_actor_border: "#cccccc".to_string(),
+            sequence_actor_line: "#cccccc".to_string(),
+            // noteBkgColor = secondBkg
+            sequence_note_fill: secondary_color.clone(),
+            // mkBorder(secondaryColor, dark)
+            sequence_note_border: "#626262".to_string(),
+            sequence_activation_fill: secondary_color,
+            sequence_activation_border: "#cccccc".to_string(),
+            text_color: "#ccc".to_string(),
+            git_colors,
+            git_inv_colors,
+            git_branch_label_colors: [
+                "#2c2c2c", "lightgrey", "lightgrey", "#2c2c2c", "lightgrey", "lightgrey",
+                "lightgrey", "lightgrey",
+            ]
+            .map(|value| value.to_string()),
+            // invert(secondaryColor)
+            git_commit_label_color: "#b8b6b6".to_string(),
+            git_commit_label_background: "#474949".to_string(),
+            // tagLabelColor = primaryTextColor, background = primaryColor
+            git_tag_label_color: "#e0dfdf".to_string(),
+            git_tag_label_background: "#1f2020".to_string(),
+            git_tag_label_border: "#cccccc".to_string(),
+            pie_colors,
+            pie_title_text_size: 25.0,
+            pie_title_text_color: "lightgrey".to_string(),
+            pie_section_text_size: 17.0,
+            pie_section_text_color: "#ccc".to_string(),
+            pie_legend_text_size: 17.0,
+            pie_legend_text_color: "lightgrey".to_string(),
+            pie_stroke_color: "#000000".to_string(),
+            pie_stroke_width: 2.0,
+            pie_outer_stroke_width: 2.0,
+            pie_outer_stroke_color: "#000000".to_string(),
+            pie_opacity: 0.7,
+        }
+    }
+
+    /// Mermaid `forest` theme, ported from mermaid-js `theme-forest.js`.
+    /// Base colors: primaryColor #cde498, secondaryColor #cdffb2.
+    pub fn forest() -> Self {
+        let primary_color = "#cde498".to_string();
+        let secondary_color = "#cdffb2".to_string();
+        // lighten(primary, 10)
+        let tertiary_color = "#e1efc0".to_string();
+        // theme-forest.js pie1..pie12 derivation (adjust h/l on base colors).
+        let pie_colors = [
+            "#cde498", "#cdffb2", "#e1efc0", "#8cb42f", "#6aff19", "#33b52e", "#70d990",
+            "#d99070", "#98cde4", "#1a6330", "#63301a", "#1a4d63",
+        ]
+        .map(|value| value.to_string());
+        // git0..7 = darken(adjusted primary/secondary/tertiary, 25)
+        let git_colors = [
+            "#9bc834", "#7aff33", "#b1d55a", "#c8ab34", "#c86134", "#c83452", "#34c861",
+            "#349bc8",
+        ]
+        .map(|value| value.to_string());
+        let git_inv_colors = [
+            "#6437cb", "#8500cc", "#4e2aa5", "#3754cb", "#379ecb", "#37cbad", "#cb379e",
+            "#cb6437",
+        ]
+        .map(|value| value.to_string());
+        Self {
+            font_family: "'trebuchet ms', verdana, arial, \"DejaVu Sans\", \"Liberation Sans\", sans-serif, \"Noto Color Emoji\", \"Apple Color Emoji\", \"Segoe UI Emoji\"".to_string(),
+            font_size: 16.0,
+            primary_color: primary_color.clone(),
+            // invert(primaryColor)
+            primary_text_color: "#321b67".to_string(),
+            // border1
+            primary_border_color: "#13540c".to_string(),
+            line_color: "green".to_string(),
+            secondary_color,
+            tertiary_color,
+            edge_label_background: "#e8e8e8".to_string(),
+            // clusterBkg = secondBkg
+            cluster_background: "#cdffb2".to_string(),
+            // border2
+            cluster_border: "#6eaa49".to_string(),
+            background: "#ffffff".to_string(),
+            sequence_actor_fill: primary_color,
+            // darken(mainBkg, 20)
+            sequence_actor_border: "#a6cf47".to_string(),
+            sequence_actor_line: "#a6cf47".to_string(),
+            sequence_note_fill: "#fff5ad".to_string(),
+            sequence_note_border: "#6eaa49".to_string(),
+            sequence_activation_fill: "#f4f4f4".to_string(),
+            sequence_activation_border: "#666666".to_string(),
+            text_color: MERMAID_TEXT_COLOR.to_string(),
+            git_colors,
+            git_inv_colors,
+            git_branch_label_colors: [
+                "black", "black", "black", "black", "black", "black", "black", "black",
+            ]
+            .map(|value| value.to_string()),
+            // invert(secondaryColor)
+            git_commit_label_color: "#32004d".to_string(),
+            git_commit_label_background: "#cdffb2".to_string(),
+            // invert(primaryColor), primaryColor, mkBorder(primary)
+            git_tag_label_color: "#321b67".to_string(),
+            git_tag_label_background: "#cde498".to_string(),
+            git_tag_label_border: "#abb594".to_string(),
+            pie_colors,
+            pie_title_text_size: 25.0,
+            pie_title_text_color: "black".to_string(),
+            pie_section_text_size: 17.0,
+            pie_section_text_color: MERMAID_TEXT_COLOR.to_string(),
+            pie_legend_text_size: 17.0,
+            pie_legend_text_color: "black".to_string(),
+            pie_stroke_color: "#000000".to_string(),
+            pie_stroke_width: 2.0,
+            pie_outer_stroke_width: 2.0,
+            pie_outer_stroke_color: "#000000".to_string(),
+            pie_opacity: 0.7,
+        }
+    }
+
+    /// Mermaid `neutral` theme, ported from mermaid-js `theme-neutral.js`.
+    /// Greyscale palette suited for black-and-white printing.
+    pub fn neutral() -> Self {
+        let primary_color = "#eeeeee".to_string();
+        // lighten(contrast #707070, 55)
+        let secondary_color = "#fcfcfc".to_string();
+        // adjust(primary, { h: -160 }) — grey, hue shift is a no-op
+        let tertiary_color = "#eeeeee".to_string();
+        // theme-neutral.js maps pie1..pie11 onto its fixed grey cScale1..11
+        // and wraps pie12 back to cScale0 (#555).
+        let pie_colors = [
+            "#f4f4f4", "#555555", "#bbbbbb", "#777777", "#999999", "#dddddd", "#ffffff",
+            "#dddddd", "#bbbbbb", "#999999", "#777777", "#555555",
+        ]
+        .map(|value| value.to_string());
+        // git0 = darken(pie1, 25), git1..7 = pie2..8
+        let git_colors = [
+            "#b4b4b4", "#555555", "#bbbbbb", "#777777", "#999999", "#dddddd", "#ffffff",
+            "#dddddd",
+        ]
+        .map(|value| value.to_string());
+        let git_inv_colors = [
+            "#4b4b4b", "#aaaaaa", "#444444", "#888888", "#666666", "#222222", "#000000",
+            "#222222",
+        ]
+        .map(|value| value.to_string());
+        Self {
+            font_family: "'trebuchet ms', verdana, arial, \"DejaVu Sans\", \"Liberation Sans\", sans-serif, \"Noto Color Emoji\", \"Apple Color Emoji\", \"Segoe UI Emoji\"".to_string(),
+            font_size: 16.0,
+            primary_color: primary_color.clone(),
+            // invert(primaryColor)
+            primary_text_color: "#111111".to_string(),
+            // mkBorder(primaryColor)
+            primary_border_color: "#d4d4d4".to_string(),
+            line_color: "#666666".to_string(),
+            secondary_color: secondary_color.clone(),
+            tertiary_color,
+            edge_label_background: "white".to_string(),
+            // clusterBkg = secondBkg = lighten(contrast, 55)
+            cluster_background: "#fcfcfc".to_string(),
+            // border2 = contrast
+            cluster_border: "#707070".to_string(),
+            background: "#ffffff".to_string(),
+            sequence_actor_fill: primary_color,
+            // lighten(border1 #999, 23)
+            sequence_actor_border: "#d4d4d4".to_string(),
+            sequence_actor_line: "#d4d4d4".to_string(),
+            // note = #ffa in the source, but sequence notes render as #666/#fff
+            sequence_note_fill: "#666666".to_string(),
+            sequence_note_border: "#999999".to_string(),
+            sequence_activation_fill: "#f4f4f4".to_string(),
+            sequence_activation_border: "#666666".to_string(),
+            text_color: MERMAID_TEXT_COLOR.to_string(),
+            git_colors,
+            git_inv_colors,
+            git_branch_label_colors: [
+                "black", "white", "black", "white", "black", "black", "black", "black",
+            ]
+            .map(|value| value.to_string()),
+            // invert(secondaryColor)
+            git_commit_label_color: "#030303".to_string(),
+            git_commit_label_background: "#fcfcfc".to_string(),
+            git_tag_label_color: "#111111".to_string(),
+            git_tag_label_background: "#eeeeee".to_string(),
+            git_tag_label_border: "#d4d4d4".to_string(),
+            pie_colors,
+            pie_title_text_size: 25.0,
+            // taskTextDarkColor = text = #333
+            pie_title_text_color: MERMAID_TEXT_COLOR.to_string(),
+            pie_section_text_size: 17.0,
+            pie_section_text_color: MERMAID_TEXT_COLOR.to_string(),
+            pie_legend_text_size: 17.0,
+            pie_legend_text_color: MERMAID_TEXT_COLOR.to_string(),
+            pie_stroke_color: "#000000".to_string(),
+            pie_stroke_width: 2.0,
+            pie_outer_stroke_width: 2.0,
+            pie_outer_stroke_color: "#000000".to_string(),
+            pie_opacity: 0.7,
+        }
+    }
+
+    /// Resolve a named built-in theme preset. Accepted names match the
+    /// mermaid `theme` values plus this renderer's own presets.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "modern" => Some(Self::modern()),
+            "base" | "default" | "mermaid" => Some(Self::mermaid_default()),
+            "dark" => Some(Self::dark()),
+            "forest" => Some(Self::forest()),
+            "neutral" => Some(Self::neutral()),
+            _ => None,
+        }
+    }
 }
 
 /// Derive the 12-color pie palette the same way mermaid-js `theme-default.js`
@@ -314,5 +570,51 @@ mod tests {
         assert_eq!(parse_hex("#fff"), Some((1.0, 1.0, 1.0)));
         assert_eq!(parse_hex("#ff0000"), Some((1.0, 0.0, 0.0)));
         assert_eq!(parse_hex("#00ff0080"), Some((0.0, 1.0, 0.0)));
+    }
+
+    #[test]
+    fn theme_from_name_resolves_builtin_presets() {
+        assert_eq!(Theme::from_name("dark").unwrap().background, "#333333");
+        assert_eq!(
+            Theme::from_name("forest").unwrap().primary_color,
+            "#cde498"
+        );
+        assert_eq!(
+            Theme::from_name("neutral").unwrap().primary_color,
+            "#eeeeee"
+        );
+        assert_eq!(
+            Theme::from_name("default").unwrap().primary_color,
+            "#ECECFF"
+        );
+        assert_eq!(
+            Theme::from_name("DARK").unwrap().background,
+            "#333333",
+            "names should be case-insensitive"
+        );
+        assert!(Theme::from_name("no-such-theme").is_none());
+    }
+
+    #[test]
+    fn builtin_theme_pie_palettes_have_no_adjacent_duplicates() {
+        for theme in [
+            Theme::mermaid_default(),
+            Theme::modern(),
+            Theme::dark(),
+            Theme::forest(),
+            Theme::neutral(),
+        ] {
+            for pair in theme.pie_colors.windows(2) {
+                assert_ne!(
+                    pair[0], pair[1],
+                    "adjacent pie palette entries should differ: {:?}",
+                    theme.pie_colors
+                );
+            }
+            // The first three slices are the most common case; they must all
+            // be distinct (issue #69).
+            assert_ne!(theme.pie_colors[0], theme.pie_colors[2]);
+            assert_ne!(theme.pie_colors[1], theme.pie_colors[2]);
+        }
     }
 }

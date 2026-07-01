@@ -1495,20 +1495,43 @@ struct ConfigFile {
 }
 
 pub fn load_config(path: Option<&Path>) -> anyhow::Result<Config> {
+    load_config_with_theme(path, None)
+}
+
+/// Load config with an optional CLI theme preset. The preset takes
+/// precedence over the config file's `theme` name but is applied before
+/// `themeVariables`, so fine-grained variable overrides still win.
+pub fn load_config_with_theme(
+    path: Option<&Path>,
+    cli_theme: Option<&str>,
+) -> anyhow::Result<Config> {
     let mut config = Config::default();
+    let cli_theme = match cli_theme {
+        Some(name) => Some(Theme::from_name(name).ok_or_else(|| {
+            anyhow::anyhow!(
+                "unknown theme preset '{name}' (expected one of: default, dark, forest, neutral, modern)"
+            )
+        })?),
+        None => None,
+    };
     let Some(path) = path else {
+        if let Some(theme) = cli_theme {
+            config.theme = theme;
+            config.render.background = config.theme.background.clone();
+        }
         return Ok(config);
     };
 
     let contents = std::fs::read_to_string(path)?;
     let parsed: ConfigFile = serde_json::from_str(&contents)?;
 
-    if let Some(theme_name) = parsed.theme.as_deref() {
-        if theme_name == "modern" {
-            config.theme = Theme::modern();
-        } else if theme_name == "base" || theme_name == "default" || theme_name == "mermaid" {
-            config.theme = Theme::mermaid_default();
-        }
+    if let Some(theme_name) = parsed.theme.as_deref()
+        && let Some(theme) = Theme::from_name(theme_name)
+    {
+        config.theme = theme;
+    }
+    if let Some(theme) = cli_theme {
+        config.theme = theme;
     }
 
     if let Some(vars) = parsed.theme_variables {
