@@ -224,3 +224,47 @@ fn pie_cjk_title_fits_inside_viewbox() {
         layout.width
     );
 }
+
+/// Issue #49: `mindmap.edgeColor` config should force all mindmap edge
+/// strokes to one color, independent of the section palette.
+#[test]
+fn mindmap_edge_color_config_overrides_section_palette() {
+    let input = r#"mindmap
+  root((Root))
+    A
+      A1
+    B
+      B1
+"#;
+    let parsed = parse_mermaid(input).expect("diagram should parse");
+    let theme = Theme::mermaid_default();
+
+    let default_config = LayoutConfig::default();
+    let default_layout = compute_layout(&parsed.graph, &theme, &default_config);
+    let default_strokes: Vec<String> = default_layout
+        .edges
+        .iter()
+        .filter_map(|edge| edge.override_style.stroke.clone())
+        .collect();
+    assert!(
+        default_strokes.iter().any(|s| s != "#ff00aa"),
+        "default mindmap edges should use palette colors"
+    );
+
+    let mut config = LayoutConfig::default();
+    config.mindmap.edge_color = Some("#ff00aa".to_string());
+    let layout = compute_layout(&parsed.graph, &theme, &config);
+    assert!(!layout.edges.is_empty(), "mindmap should produce edges");
+    for edge in &layout.edges {
+        assert_eq!(
+            edge.override_style.stroke.as_deref(),
+            Some("#ff00aa"),
+            "every mindmap edge stroke should use the configured edgeColor"
+        );
+    }
+    let svg = render_svg(&layout, &theme, &config);
+    assert!(
+        svg.contains("stroke=\"#ff00aa\""),
+        "configured mindmap edgeColor should appear in the SVG output"
+    );
+}
