@@ -1,4 +1,5 @@
 use std::panic::{self, AssertUnwindSafe};
+use std::path::{Path, PathBuf};
 
 use mermaid_rs_renderer::ir::{
     BlockDiagram, BlockNode, EdgeStyleOverride, NodeStyle, PieSlice, QuadrantPoint, XYSeries,
@@ -230,4 +231,119 @@ fn non_finite_public_numeric_data_is_sanitized() {
             "{name}: SVG contains non-finite numeric attribute"
         );
     }
+}
+
+// ── Issue regressions ───────────────────────────────────────────────
+
+/// Issue #37: enormous coordinates (for example from one huge unbroken label)
+/// used to leave `route_edge_with_avoidance` with an empty candidate list and
+/// panic with "index out of bounds: the len is 0 but the index is 0"
+/// (src/layout/routing.rs:1994 in v0.2.1, `expect("candidate")` in v0.2.2).
+/// The router must fall back to a straight-line route instead of panicking.
+#[test]
+fn issue_37_offscreen_coordinates_from_huge_label_do_not_panic() {
+    let big = "M".repeat(20_000);
+    let src = format!("flowchart LR\n  A[{big}] --> B[End]\n  B --> A\n");
+    let result = panic::catch_unwind(AssertUnwindSafe(|| {
+        mermaid_rs_renderer::render(&src).expect("diagram should parse")
+    }));
+    let svg = result.expect("issue #37 repro: render panicked");
+    assert!(svg.contains("<svg"));
+    assert!(!has_non_finite_numeric_attribute(&svg));
+}
+
+/// Issue #37 companion: degenerate flowcharts that can starve the router of
+/// candidates (self loops, overlapping mutual edges, zero-size labels).
+#[test]
+fn issue_37_degenerate_flowcharts_do_not_panic() {
+    let cases = [
+        // Self loop only.
+        "flowchart TD\n  A --> A\n",
+        // Self loop plus mutual edges.
+        "flowchart TD\n  A --> A\n  A --> B\n  B --> A\n",
+        // Empty labels.
+        "flowchart LR\n  A[\" \"] --> B[\" \"]\n  B --> A\n",
+        // Duplicate edges stacked on one pair.
+        "flowchart LR\n  A --> B\n  A --> B\n  A --> B\n  B --> A\n  B --> A\n",
+        // Single node, no edges.
+        "flowchart TD\n  A\n",
+    ];
+    for src in cases {
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            mermaid_rs_renderer::render(src).expect("diagram should parse")
+        }));
+        let svg = result.unwrap_or_else(|_| panic!("render panicked for: {src}"));
+        assert!(svg.contains("<svg"), "missing svg for: {src}");
+    }
+}
+
+/// Issue #116: flowcharts with decision (diamond) nodes panicked in v0.2.2.
+/// Cover the reported shape plus hexagons and labeled edges from a diamond.
+#[test]
+fn issue_116_decision_nodes_render_without_panic() {
+    let cases = [
+        // The exact reporter snippet.
+        "flowchart TD\n  A[Start] --> B{Decision}\n  B -->|Yes| C[End]\n",
+        // Diamond with both labeled branches, hexagon, and a cycle back into
+        // the diamond.
+        "flowchart TD\n  A[Start] --> B{Is it valid?}\n  B -->|Yes| C[Process]\n  B -->|No| D{{Retry queue}}\n  D -->|requeue| B\n  C --> E([Done])\n",
+    ];
+    for src in cases {
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            mermaid_rs_renderer::render(src).expect("diagram should parse")
+        }));
+        let svg = result.unwrap_or_else(|_| panic!("render panicked for: {src}"));
+        assert!(svg.contains("<svg"), "missing svg for: {src}");
+        assert!(
+            !has_non_finite_numeric_attribute(&svg),
+            "bad svg for: {src}"
+        );
+    }
+}
+
+// ── Library-level no-panic guarantee over the fixture corpus ────────
+
+fn collect_mmd_recursive(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_mmd_recursive(&path, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("mmd") {
+            out.push(path);
+        }
+    }
+}
+
+/// The public `render()` API must never panic, whatever the input. Render
+/// every fixture in `tests/fixtures/**/*.mmd` under `catch_unwind`. Parse
+/// errors are fine (they return `Err`); panics are not.
+#[test]
+fn render_never_panics_on_any_fixture() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let mut fixtures = Vec::new();
+    collect_mmd_recursive(&root, &mut fixtures);
+    fixtures.sort();
+    assert!(!fixtures.is_empty(), "no fixtures found under {root:?}");
+
+    let mut panics = Vec::new();
+    for path in &fixtures {
+        let Ok(input) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            let _ = mermaid_rs_renderer::render(&input);
+        }));
+        if result.is_err() {
+            panics.push(path.display().to_string());
+        }
+    }
+    assert!(
+        panics.is_empty(),
+        "render() panicked on {} fixture(s):\n{}",
+        panics.len(),
+        panics.join("\n")
+    );
 }
