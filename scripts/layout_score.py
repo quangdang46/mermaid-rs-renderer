@@ -774,6 +774,41 @@ def compute_metrics(data, nodes, edges):
                         containment_foreign_node_count += 1
                         containment_overlap_area += overlap
 
+    # Text clipping: for box-shaped diagram kinds the measured label block
+    # must fit inside the node box, and every visible node must fit on the
+    # canvas. Kinds that legitimately draw labels outside the node shape
+    # (sankey bars, architecture icons, ...) are excluded in the gate layer.
+    label_overflow_count = 0
+    label_overflow_area = 0.0
+    canvas_overflow_count = 0
+    canvas_w = float(data.get("width", 0.0) or 0.0)
+    canvas_h = float(data.get("height", 0.0) or 0.0)
+    for node in nodes.values():
+        node_id = str(node.get("id"))
+        # State pseudostate markers carry the state name as metadata but
+        # render as small circles/bars without inline text.
+        if node_id.startswith("__start_") or node_id.startswith("__end_"):
+            continue
+        lw = float(node.get("label_width", 0.0) or 0.0)
+        lh = float(node.get("label_height", 0.0) or 0.0)
+        w = node["width"]
+        h = node["height"]
+        lines = node.get("label_lines") or []
+        has_text = any(str(line).strip() for line in lines)
+        if has_text and (lw > w + 1.0 or lh > h + 1.0):
+            label_overflow_count += 1
+            label_overflow_area += max(lw - w, 0.0) * max(lh, 1.0) + max(lh - h, 0.0) * max(
+                lw, 1.0
+            )
+        if canvas_w > 0.0 and canvas_h > 0.0:
+            if (
+                node["x"] < -1.0
+                or node["y"] < -1.0
+                or node["x"] + w > canvas_w + 1.0
+                or node["y"] + h > canvas_h + 1.0
+            ):
+                canvas_overflow_count += 1
+
     for idx, edge in enumerate(edges):
         points = [tuple(p) for p in edge.get("points", [])]
         edge_points.append(points)
@@ -1321,6 +1356,9 @@ def compute_metrics(data, nodes, edges):
         "containment_foreign_node_count": containment_foreign_node_count,
         "containment_member_escape_count": containment_member_escape_count,
         "containment_overlap_area": containment_overlap_area,
+        "label_overflow_count": label_overflow_count,
+        "label_overflow_area": label_overflow_area,
+        "canvas_overflow_count": canvas_overflow_count,
     }
 
 

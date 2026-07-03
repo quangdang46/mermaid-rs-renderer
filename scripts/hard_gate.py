@@ -61,6 +61,14 @@ HARD_METRIC_KINDS = {
     # misstate the diagram's declared structure.
     "containment_foreign_node_count": GRAPH_KINDS,
     "containment_member_escape_count": GRAPH_KINDS,
+    # Text clipping: the measured label block must fit inside its node box
+    # for box-shaped kinds. Sankey/architecture/state-markers legitimately
+    # draw text outside the shape and are excluded via kind gating or id
+    # filtering inside layout_score.
+    "label_overflow_count": GRAPH_KINDS,
+    # Canvas overflow is universal for visible nodes: nothing may render
+    # outside the emitted SVG canvas.
+    "canvas_overflow_count": None,
     # non_finite is universal: no diagram may emit a NaN/Inf coordinate.
     "non_finite": None,
 }
