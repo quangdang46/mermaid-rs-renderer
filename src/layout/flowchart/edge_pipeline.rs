@@ -2886,6 +2886,17 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
             &mut routed_points,
             config,
         );
+        // Containment pass: label/anchor sync can drag paths through foreign
+        // subgraph boxes. Run before endpoint enforcement/repairs so those
+        // final passes own the endpoint geometry.
+        path_cleanup::detour_flowchart_paths_around_foreign_subgraphs(
+            graph,
+            nodes,
+            subgraphs,
+            &mut routed_points,
+            config,
+        );
+        path_cleanup::simplify_flowchart_axis_oscillations(&mut routed_points);
         enforce_flowchart_endpoint_ports(graph, nodes, &edge_ports, &mut routed_points, config);
         path_cleanup::repair_flowchart_endpoint_reentries(graph, nodes, &mut routed_points, config);
         repair_flowchart_endpoint_reentries_by_rerouting(
@@ -2904,16 +2915,6 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
             &mut routed_points,
         );
         path_cleanup::repair_flowchart_endpoint_reentries(graph, nodes, &mut routed_points, config);
-        // Final containment pass: later label/endpoint repairs may have
-        // dragged paths back through foreign subgraph boxes.
-        path_cleanup::detour_flowchart_paths_around_foreign_subgraphs(
-            graph,
-            nodes,
-            subgraphs,
-            &mut routed_points,
-            config,
-        );
-        path_cleanup::simplify_flowchart_axis_oscillations(&mut routed_points);
     }
     #[cfg(debug_assertions)]
     if graph.kind == DiagramKind::Flowchart {
