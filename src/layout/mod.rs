@@ -860,6 +860,27 @@ fn apply_preferred_aspect_ratio_layout(layout: &mut Layout, config: &LayoutConfi
         return;
     }
 
+    // Scaling moves node origins but not node sizes, which would detach edge
+    // endpoints from their node boundaries. Record each endpoint's offset
+    // relative to its node rect so it can be re-anchored after scaling.
+    let endpoint_anchors: Vec<(Option<(f32, f32)>, Option<(f32, f32)>)> = layout
+        .edges
+        .iter()
+        .map(|edge| {
+            let start = layout.nodes.get(&edge.from).and_then(|node| {
+                edge.points
+                    .first()
+                    .map(|point| (point.0 - node.x, point.1 - node.y))
+            });
+            let end = layout.nodes.get(&edge.to).and_then(|node| {
+                edge.points
+                    .last()
+                    .map(|point| (point.0 - node.x, point.1 - node.y))
+            });
+            (start, end)
+        })
+        .collect();
+
     let mut total_scale_x = 1.0f32;
     let mut total_scale_y = 1.0f32;
     for _ in 0..PREFERRED_ASPECT_MAX_PASSES {
@@ -887,9 +908,60 @@ fn apply_preferred_aspect_ratio_layout(layout: &mut Layout, config: &LayoutConfi
         total_scale_y *= scale_y;
     }
 
+    if total_scale_x != 1.0 || total_scale_y != 1.0 {
+        reanchor_edge_endpoints(layout, &endpoint_anchors);
+    }
+
     let (width, height) = graph_layout_dimensions(layout);
     layout.width = width;
     layout.height = height;
+}
+
+/// Restore edge endpoints to their pre-scale offsets relative to their node
+/// rects so they stay attached to node boundaries after aspect scaling.
+/// Adjacent points are nudged to keep the first/last segments axis-aligned
+/// when they were axis-aligned before.
+fn reanchor_edge_endpoints(
+    layout: &mut Layout,
+    endpoint_anchors: &[(Option<(f32, f32)>, Option<(f32, f32)>)],
+) {
+    for (edge_idx, edge) in layout.edges.iter_mut().enumerate() {
+        let Some((start_anchor, end_anchor)) = endpoint_anchors.get(edge_idx) else {
+            continue;
+        };
+        let point_count = edge.points.len();
+        if point_count < 2 {
+            continue;
+        }
+        if let (Some((dx, dy)), Some(node)) = (start_anchor, layout.nodes.get(&edge.from)) {
+            let target = (node.x + dx, node.y + dy);
+            let old = edge.points[0];
+            edge.points[0] = target;
+            // Keep the leading segment axis-aligned. Interior points only:
+            // the far endpoint of a 2-point edge is re-anchored separately.
+            if point_count > 2 {
+                let next = edge.points[1];
+                if (next.0 - old.0).abs() <= 1e-3 {
+                    edge.points[1].0 = target.0;
+                } else if (next.1 - old.1).abs() <= 1e-3 {
+                    edge.points[1].1 = target.1;
+                }
+            }
+        }
+        if let (Some((dx, dy)), Some(node)) = (end_anchor, layout.nodes.get(&edge.to)) {
+            let target = (node.x + dx, node.y + dy);
+            let old = edge.points[point_count - 1];
+            edge.points[point_count - 1] = target;
+            if point_count > 2 {
+                let prev = edge.points[point_count - 2];
+                if (prev.0 - old.0).abs() <= 1e-3 {
+                    edge.points[point_count - 2].0 = target.0;
+                } else if (prev.1 - old.1).abs() <= 1e-3 {
+                    edge.points[point_count - 2].1 = target.1;
+                }
+            }
+        }
+    }
 }
 
 fn scale_graph_geometry(layout: &mut Layout, scale_x: f32, scale_y: f32) {
