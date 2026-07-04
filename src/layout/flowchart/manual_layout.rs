@@ -729,8 +729,6 @@ pub(in crate::layout) fn assign_positions_manual(
             place_rank(rank_idx, false, nodes);
         }
     }
-    drop(place_rank);
-
     ManualLayoutRanks { rank_nodes }
 }
 
