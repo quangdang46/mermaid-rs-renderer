@@ -1,16 +1,16 @@
 # mmdr — Mermaid RS Renderer
 
 <div align="center">
-  <img src="mmdr_illustration.webp" alt="mmdr — 100–1400x faster Mermaid rendering in pure Rust" width="720">
+  <img src="mmdr_illustration.webp" alt="mmdr — 100–1400x faster Mermaid rendering in pure Rust">
 </div>
 
 <div align="center">
 
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue.svg)
 ![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Crates.io](https://img.shields.io/crates/v/mermaid-rs-renderer.svg)](https://crates.io/crates/mermaid-rs-renderer)
-[![GitHub release](https://img.shields.io/github/v/release/quangdang46/mermaid-rs-renderer)](https://github.com/quangdang46/mermaid-rs-renderer/releases)
+![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Crates.io](https://img.shields.io/crates/v/mermaid-rs-renderer.svg)
+![Release](https://img.shields.io/github/v/release/quangdang46/mermaid-rs-renderer)
 
 </div>
 
@@ -18,7 +18,6 @@
 Parse Mermaid natively and render straight to SVG (or PNG) — no Chromium, no Node, no Puppeteer.
 
 <div align="center">
-<h3>Quick Install</h3>
 
 ```bash
 cargo install mermaid-rs-renderer
@@ -27,6 +26,25 @@ echo 'flowchart LR; A-->B-->C' | mmdr -e svg
 ```
 
 </div>
+
+---
+
+## 🤖 Agent Quickstart
+
+```bash
+# Pipe to stdout (fastest)
+echo 'flowchart LR; A-->B-->C' | mmdr -e svg
+
+# File to SVG (440× faster than mermaid-cli)
+mmdr -i diagram.mmd -o output.svg -e svg
+
+# With timing JSON
+mmdr -i diagram.mmd -o out.svg -e svg --timing
+
+# Library embed (Criterion: ~1.5 ms)
+use mermaid_rs_renderer::render;
+let svg = render("flowchart LR; A-->B-->C")?;
+```
 
 ---
 
