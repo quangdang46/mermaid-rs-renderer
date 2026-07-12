@@ -1,500 +1,406 @@
+# mmdr — Mermaid RS Renderer
+
 <div align="center">
-
-# mmdr
-
-**100–1400x faster Mermaid rendering. Pure Rust. Zero browser dependencies.**
-
-[Installation](#installation) | [Quick Start](#quick-start) | [Benchmarks](#performance) | [Examples](#diagram-types)
-
+  <img src="mmdr_illustration.webp" alt="mmdr — 100–1400x faster Mermaid rendering in pure Rust" width="720">
 </div>
-
-> **Note:** This library is under active early development. Visual output quality is improving rapidly but may not yet match mermaid-cli in all cases. Bug reports and PRs are welcome.
-
-## Performance
-
-mmdr renders diagrams **100–1400x faster** than mermaid-cli by eliminating browser overhead.
-With the built-in font cache (warm after first run), tiny diagrams reach **500–900×** (and `--fastText` exceeds **1600×**).
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/benchmarks/comparison.svg" alt="Performance comparison" width="600">
-</p>
 
 <div align="center">
 
-| Diagram | mmdr | mermaid-cli | Speedup |
-|:--------|-----:|------------:|--------:|
-| Flowchart | 4.49 ms | 1,971 ms | **439x** |
-| Class Diagram | 4.67 ms | 1,907 ms | **408x** |
-| State Diagram | 3.97 ms | 1,968 ms | **496x** |
-| Sequence Diagram | 2.71 ms | 1,906 ms | **704x** |
-
-<sub>Tested on Intel Core Ultra 7 265V, Linux 6.18.7 | mermaid-cli 11.4.2 via Puppeteer/Chromium</sub>
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue.svg)
+![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Crates.io](https://img.shields.io/crates/v/mermaid-rs-renderer.svg)](https://crates.io/crates/mermaid-rs-renderer)
+[![GitHub release](https://img.shields.io/github/v/release/quangdang46/mermaid-rs-renderer)](https://github.com/quangdang46/mermaid-rs-renderer/releases)
 
 </div>
 
-<details>
-<summary><strong>Font cache (default, warm after first run)</strong></summary>
+**100–1400× faster Mermaid rendering. Pure Rust. Zero browser dependencies.**  
+Parse Mermaid natively and render straight to SVG (or PNG) — no Chromium, no Node, no Puppeteer.
 
-Once the font cache is populated, tiny/common diagrams reach **500–900×**:
+<div align="center">
+<h3>Quick Install</h3>
 
-| Diagram (tiny) | mmdr (warm cache) | mermaid-cli | Speedup |
-|:--|--:|--:|--:|
-| Flowchart | 2.96 ms | 2,259 ms | **764×** |
-| Class | 2.55 ms | 2,347 ms | **919×** |
-| State | 2.67 ms | 2,111 ms | **789×** |
-| Sequence | 3.75 ms | 2,010 ms | **536×** |
+```bash
+cargo install mermaid-rs-renderer
+# or
+echo 'flowchart LR; A-->B-->C' | mmdr -e svg
+```
 
-<sub>Measured Feb 2, 2026 on the same machine.</sub>
-</details>
+</div>
 
-<details>
-<summary><strong>Fast text metrics (optional, fastest)</strong></summary>
+---
 
-Enable `--fastText` to use calibrated fallback widths for ASCII labels (avoids font DB load).
-On tiny/common diagrams this reaches **1600–2069×** speedups:
+## TL;DR
 
-| Diagram (tiny) | mmdr `--fastText` | mermaid-cli | Speedup |
-|:--|--:|--:|--:|
-| Flowchart | 1.32 ms | 2,116 ms | **1,601×** |
-| Class | 1.23 ms | 2,314 ms | **1,880×** |
-| State | 1.09 ms | 2,258 ms | **2,069×** |
-| Sequence | 1.16 ms | 2,158 ms | **1,868×** |
+### The Problem
 
-<sub>Measured Feb 2, 2026 on the same machine.</sub>
-</details>
+Official `mermaid-cli` spawns **headless Chromium per diagram** — ~2s startup tax every time.
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/benchmarks/breakdown.svg" alt="Pipeline breakdown" width="500">
-</p>
+| Workload | mermaid-cli | Reality |
+|----------|-------------|---------|
+| 50 diagrams in CI | ~2 minutes | Browser tax dominates |
+| Live editor preview | Multi-second lag | Unusable feedback loop |
+| Batch docs | Coffee break | Throughput capped by Puppeteer |
 
-<details>
-<summary><strong>Library Performance (no CLI overhead)</strong></summary>
+### The Solution
 
-When used as a Rust library, mmdr is even faster with no process spawn overhead:
+**mmdr** parses Mermaid in Rust and emits SVG/PNG directly.
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/benchmarks/library.svg" alt="Library performance" width="500">
-</p>
+| Metric (typical) | mmdr | mermaid-cli | Speedup |
+|------------------|------|-------------|---------|
+| Flowchart | ~4.5 ms | ~2.0 s | **~440×** |
+| Class | ~4.7 ms | ~1.9 s | **~410×** |
+| State | ~4.0 ms | ~2.0 s | **~500×** |
+| Sequence | ~2.7 ms | ~1.9 s | **~700×** |
 
-| Diagram | Library Time |
-|:--------|-------------:|
-| Flowchart | 1.49 ms |
-| Class Diagram | 2.51 ms |
-| State Diagram | 2.04 ms |
-| Sequence Diagram | 0.07 ms |
+Warm font cache: **500–900×**. Optional `--fastText`: **1600×+** on tiny diagrams.
 
-These are raw render times measured with Criterion, ideal for embedding in applications.
+### Why Use mmdr?
 
-</details>
+| Feature | What it does |
+|---------|--------------|
+| **Native parse + layout** | No browser process spawn |
+| **SVG + PNG** | PNG via `resvg` (feature-gated) |
+| **Library API** | Embed in Rust apps without CLI spawn |
+| **Themes** | `default` · `dark` · `forest` · `neutral` · `modern` |
+| **23 diagram types** | Flowchart, sequence, class, state, ER, gantt, … |
+| **CI-friendly** | Single static binary, ~15 MB RAM vs ~300 MB Chromium |
 
-<details>
-<summary><strong>Extended Benchmarks</strong></summary>
+---
 
-Performance on larger diagrams:
+### Quick Example
 
-| Diagram | Nodes | mmdr | mermaid-cli | Speedup |
-|:--------|------:|-----:|------------:|--------:|
-| flowchart (small) | 10 | 3.38 ms | 1,910 ms | 565x |
-| flowchart (medium) | 50 | 8.71 ms | 2,018 ms | 232x |
-| flowchart (large) | 200 | 47.00 ms | 2,276 ms | 48x |
+```bash
+# Pipe to stdout
+echo 'flowchart LR; A-->B-->C' | mmdr -e svg
 
-The speedup advantage decreases for very large diagrams as actual layout computation becomes more significant relative to browser startup overhead. Still, mmdr remains **100x+ faster** even for 200-node diagrams.
+# File → file
+mmdr -i diagram.mmd -o output.svg -e svg
 
-</details>
+# Dark theme + timing JSON on stderr
+mmdr -i diagram.mmd -o out.svg -e svg --theme dark --timing
 
-## Why mmdr?
+# Fast text metrics (ASCII labels)
+mmdr -i diagram.mmd -o out.svg -e svg --fastText
 
-The official `mermaid-cli` spawns a **headless Chromium browser** for every diagram, adding 2-3 seconds of startup overhead.
+# PNG
+mmdr -i diagram.mmd -o out.png -e png
+```
 
-| Use Case | mermaid-cli | mmdr |
-|:---------|:------------|:-----|
-| CI/CD pipeline with 50 diagrams | ~2 minutes | **< 1 second** |
-| Real-time editor preview | Unusable lag | **Instant** |
-| Batch doc generation | Coffee break | **Blink of an eye** |
+---
 
-mmdr parses Mermaid syntax natively in Rust and renders directly to SVG. No browser. No Node.js. No Puppeteer.
+## Design Philosophy
+
+1. **Browser-free by default.**  
+   If a doc tool needs Chromium just to draw boxes and arrows, something is wrong.
+
+2. **Milliseconds matter in agent loops.**  
+   Agents and live previews render diagrams constantly; 2s cold starts kill the loop.
+
+3. **Library first, CLI second.**  
+   Criterion-level in-process times (flowchart ~1.5 ms) beat even a fast CLI spawn.
+
+4. **Visual parity is a ratchet, not a promise of pixel identity.**  
+   Hard gates and conformance fixtures continuously reduce divergence from mermaid-js.
+
+5. **Feature-gated weight.**  
+   Drop `png` / `cli` features when embedding in servers or static-site generators.
+
+---
+
+## How mmdr Compares
+
+| Use case | mermaid-cli | Kroki / remote | **mmdr** |
+|----------|-------------|----------------|----------|
+| CI with 50 diagrams | ~2 min | Network + queue | **&lt; 1 s** |
+| Real-time preview | Lag | Latency | **Instant** |
+| Embed in Rust apps | N/A | HTTP client | **Library API** |
+| Runtime deps | Node + Chromium | Service | **Binary only** |
+| Offline / air-gap | Heavy | ❌ | ✅ |
+| Visual parity | Reference | Varies | Improving fast |
+
+**When to use mmdr:**
+- CI pipelines rendering many diagrams
+- Local previews and agent toolchains
+- Embedding Mermaid in Rust services / static generators
+
+**When mmdr might not be ideal:**
+- You need every experimental mermaid-js plugin / click handler
+- Pixel-perfect identity with mermaid-cli is a hard release gate (diff goldens)
+
+---
 
 ## Installation
 
 ```bash
-# crates.io (recommended)
+# crates.io
 cargo install mermaid-rs-renderer
 
-# From source
-cargo install --path .
-
-# Homebrew (macOS/Linux)
+# Homebrew
 brew tap 1jehuang/mmdr && brew install mmdr
 
 # Scoop (Windows)
 scoop bucket add mmdr https://github.com/1jehuang/scoop-mmdr && scoop install mmdr
 
-# AUR (Arch)
+# AUR
 yay -S mmdr-bin
 
-# Nix (flake)
+# Nix flake
 nix run github:1jehuang/mermaid-rs-renderer -- --help
-nix profile install github:1jehuang/mermaid-rs-renderer
+
+# From this fork (source)
+git clone https://github.com/quangdang46/mermaid-rs-renderer.git
+cd mermaid-rs-renderer
+cargo install --path .
 ```
+
+> **Note:** Upstream package/Homebrew paths may track [`1jehuang/mermaid-rs-renderer`](https://github.com/1jehuang/mermaid-rs-renderer). This fork at `quangdang46/mermaid-rs-renderer` follows the same CLI (`mmdr`).
+
+### Library-only (minimal deps)
+
+```toml
+[dependencies]
+mermaid-rs-renderer = { version = "0.3", default-features = false }
+```
+
+| Feature | Default | Purpose |
+|---------|---------|---------|
+| `cli` | ✅ | `mmdr` binary |
+| `png` | ✅ | PNG via resvg |
+
+---
 
 ## Quick Start
 
 ```bash
-# Pipe diagram to stdout
+# stdin → stdout
 echo 'flowchart LR; A-->B-->C' | mmdr -e svg
 
-# Read from stdin, write to a file (use '-i -' for explicit stdin)
+# explicit stdin → file
 echo 'flowchart LR; A-->B-->C' | mmdr -i - -o out.svg -e svg
 
-# File to file
+# file → file
 mmdr -i diagram.mmd -o output.svg -e svg
-mmdr -i diagram.mmd -o output.png -e png
 
-# Render all diagrams from a Markdown file
-mmdr -i README.md -o ./diagrams/ -e svg
+# size metadata only (JSON)
+mmdr -i diagram.mmd --size
+
+# layout dump for debugging
+mmdr -i diagram.mmd -o out.svg --dumpLayout layout.json
 ```
 
-By default the output uses the diagram's natural dimensions (the root SVG
-`width`/`height` match the `viewBox`, so there is no letterbox padding).
-Pass `--width`/`--height` to force explicit output dimensions.
-
-## Diagram Types
-
-mmdr supports **23 Mermaid diagram types**:
-
-| Category | Diagrams |
-|:---------|:---------|
-| **Core** | Flowchart, Sequence, Class, State |
-| **Data** | ER Diagram, Pie Chart, XY Chart, Quadrant Chart, Sankey |
-| **Planning** | Gantt, Timeline, Journey, Kanban |
-| **Architecture** | C4, Block, Architecture, Requirement |
-| **Other** | Mindmap, Git Graph, ZenUML, Packet, Radar, Treemap |
-
-<table>
-<tr>
-<td align="center" width="50%">
-<strong>Flowchart</strong><br>
-<img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/flowchart_mmdr.svg" alt="Flowchart" width="100%">
-</td>
-<td align="center" width="50%">
-<strong>Class Diagram</strong><br>
-<img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/class_mmdr.svg" alt="Class Diagram" width="100%">
-</td>
-</tr>
-<tr>
-<td align="center" width="50%">
-<strong>State Diagram</strong><br>
-<img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/state_mmdr.svg" alt="State Diagram" width="100%">
-</td>
-<td align="center" width="50%">
-<strong>Sequence Diagram</strong><br>
-<img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/sequence_mmdr.svg" alt="Sequence Diagram" width="100%">
-</td>
-</tr>
-</table>
-
-<details>
-<summary><strong>Compare with mermaid-cli output</strong></summary>
-
-| Type | mmdr | mermaid-cli |
-|:-----|:----:|:-----------:|
-| Flowchart | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/flowchart_mmdr.svg" width="350"> | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/flowchart_official.svg" width="350"> |
-| Class | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/class_mmdr.svg" width="350"> | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/class_official.svg" width="350"> |
-| State | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/state_mmdr.svg" width="350"> | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/state_official.svg" width="350"> |
-| Sequence | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/sequence_mmdr.svg" width="350"> | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/sequence_official.svg" width="350"> |
-| ER Diagram | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/er_mmdr.svg" width="350"> | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/er_official.svg" width="350"> |
-| Pie Chart | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/pie_mmdr.svg" width="350"> | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/pie_official.svg" width="350"> |
-| Gantt | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/gantt_mmdr.svg" width="350"> | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/gantt_official.svg" width="350"> |
-| Mindmap | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/mindmap_mmdr.svg" width="350"> | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/mindmap_official.svg" width="350"> |
-| Timeline | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/timeline_mmdr.svg" width="350"> | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/timeline_official.svg" width="350"> |
-| Journey | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/journey_mmdr.svg" width="350"> | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/journey_official.svg" width="350"> |
-| Git Graph | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/gitgraph_mmdr.svg" width="350"> | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/gitgraph_official.svg" width="350"> |
-| XY Chart | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/xychart_mmdr.svg" width="350"> | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/xychart_official.svg" width="350"> |
-| Quadrant | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/quadrant_mmdr.svg" width="350"> | <img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/comparisons/quadrant_official.svg" width="350"> |
-
-</details>
-
-## More Diagrams
-
-<details>
-<summary><strong>Node Shapes</strong></summary>
-
-| Shape | Syntax |
-|:------|:-------|
-| Rectangle | `[text]` |
-| Round | `(text)` |
-| Stadium | `([text])` |
-| Diamond | `{text}` |
-| Hexagon | `{{text}}` |
-| Cylinder | `[(text)]` |
-| Circle | `((text))` |
-| Double Circle | `(((text)))` |
-| Subroutine | `[[text]]` |
-| Parallelogram | `[/text/]` |
-| Trapezoid | `[/text\]` |
-| Asymmetric | `>text]` |
-
-</details>
-
-<details>
-<summary><strong>Edge Styles</strong></summary>
-
-| Type | Syntax | Description |
-|:-----|:-------|:------------|
-| Arrow | `-->` | Standard arrow |
-| Open | `---` | No arrowhead |
-| Dotted | `-.->` | Dashed line with arrow |
-| Thick | `==>` | Bold arrow |
-| Circle end | `--o` | Circle decoration |
-| Cross end | `--x` | X decoration |
-| Diamond end | `<-->` | Bidirectional |
-| With label | `--\|text\|-->` | Labeled edge |
-
-</details>
-
-<details>
-<summary><strong>Subgraphs</strong></summary>
-
-```
-flowchart TB
-    subgraph Frontend
-        A[React App] --> B[API Client]
-    end
-    subgraph Backend
-        C[Express Server] --> D[(PostgreSQL)]
-    end
-    B --> C
-```
-
-Subgraphs support:
-- Custom labels
-- Direction override (`direction LR`)
-- Nesting
-- Styling
-
-</details>
-
-<details>
-<summary><strong>Styling Directives</strong></summary>
-
-```
-flowchart LR
-    A[Start] --> B[End]
-
-    classDef highlight fill:#f9f,stroke:#333
-    class A highlight
-
-    style B fill:#bbf,stroke:#333
-    linkStyle 0 stroke:red,stroke-width:2px
-```
-
-Supported:
-- `classDef` - Define CSS classes
-- `class` - Apply classes to nodes
-- `:::class` - Inline class syntax
-- `style` - Direct node styling
-- `linkStyle` - Edge styling
-- `%%{init}%%` - Theme configuration
-
-</details>
-
-## Features
-
-**Diagram types:** `flowchart` / `graph` | `sequenceDiagram` | `classDiagram` | `stateDiagram-v2` | `erDiagram` | `pie` | `gantt` | `journey` | `timeline` | `mindmap` | `gitGraph` | `xychart-beta` | `quadrantChart` | `sankey-beta` | `kanban` | `C4Context` | `block-beta` | `architecture-beta` | `requirementDiagram` | `zenuml` | `packet-beta` | `radar-beta` | `treemap`
-
-**Node shapes:** rectangle, round-rect, stadium, circle, double-circle, diamond, hexagon, cylinder, subroutine, trapezoid, parallelogram, asymmetric
-
-**Edges:** solid, dotted, thick | Decorations: arrow, circle, cross, diamond | Labels
-
-**Styling:** `classDef`, `class`, `:::class`, `style`, `linkStyle`, `%%{init}%%`
-
-**Layout:** subgraphs with direction, nested subgraphs, automatic spacing
-
-## Configuration
-
-```bash
-mmdr -i diagram.mmd -o out.svg -c config.json
-mmdr -i diagram.mmd -o out.svg --nodeSpacing 60 --rankSpacing 120
-mmdr -i diagram.mmd -o out.svg --preferredAspectRatio 16:9
-```
-
-`preferredAspectRatio` is layout-aware for graph diagrams: the renderer first rebalances geometry toward the target ratio, then fits final SVG dimensions to that ratio.
-
-<details>
-<summary><strong>config.json example</strong></summary>
-
-```json
-{
-  "themeVariables": {
-    "primaryColor": "#F8FAFF",
-    "primaryTextColor": "#1C2430",
-    "primaryBorderColor": "#C7D2E5",
-    "lineColor": "#7A8AA6",
-    "secondaryColor": "#F0F4FF",
-    "tertiaryColor": "#E8EEFF",
-    "edgeLabelBackground": "#FFFFFF",
-    "clusterBkg": "#F8FAFF",
-    "clusterBorder": "#C7D2E5",
-    "background": "#FFFFFF",
-    "fontFamily": "Inter, system-ui, sans-serif",
-    "fontSize": 13
-  },
-  "preferredAspectRatio": "16:9",
-  "flowchart": {
-    "nodeSpacing": 50,
-    "rankSpacing": 50
-  }
-}
-```
-
-</details>
-
-## How It Works
-
-<img src="https://raw.githubusercontent.com/1jehuang/mermaid-rs-renderer/master/docs/diagrams/architecture.svg" alt="Architecture comparison" width="100%">
-
-**mmdr** implements the entire Mermaid pipeline natively:
-
-```
-.mmd → parser.rs → ir.rs → layout.rs → render.rs → SVG → resvg → PNG
-```
-
-**mermaid-cli** requires browser infrastructure:
-
-```
-.mmd → mermaid-js → layout → Browser DOM → Puppeteer → Chromium → Screenshot → PNG
-```
-
-| | mmdr | mermaid-cli |
-|:--|:-----|:------------|
-| Runtime | Native binary | Node.js + Chromium |
-| Cold start | ~3 ms | ~2,000 ms |
-| Memory | ~15 MB | ~300+ MB |
-| Dependencies | None | Node.js, npm, Chromium |
-
-## Library Usage
-
-Use mmdr as a Rust library in your project:
-
-```toml
-[dependencies]
-mermaid-rs-renderer = "0.2.2"
-```
-
-<details>
-<summary><strong>Minimal dependencies (for embedding)</strong></summary>
-
-For tools like Zola that only need SVG rendering, disable default features to avoid CLI and PNG dependencies:
-
-```toml
-[dependencies]
-mermaid-rs-renderer = { version = "0.2.2", default-features = false }
-```
-
-| Feature | Default | Description |
-|:--------|:-------:|:------------|
-| `cli` | Yes | CLI binary and clap dependency |
-| `png` | Yes | PNG output via resvg/usvg |
-
-With current locked dependencies, this reduces the dependency graph from about 123 crates to about 71 crates.
-
-</details>
-
-For unreleased commits only:
-
-```toml
-[dependencies]
-mermaid-rs-renderer = { git = "https://github.com/1jehuang/mermaid-rs-renderer", rev = "<commit-sha>" }
-```
+### Library
 
 ```rust
 use mermaid_rs_renderer::{render, render_with_options, RenderOptions};
 
-// Simple one-liner
-let svg = render("flowchart LR; A-->B-->C").unwrap();
+let svg = render("flowchart LR; A-->B-->C")?;
 
-// With custom options
-let opts = RenderOptions::modern()
-    .with_node_spacing(60.0)
-    .with_rank_spacing(80.0);
-let svg = render_with_options("flowchart TD; X-->Y", opts).unwrap();
+let opts = RenderOptions::default();
+let svg = render_with_options("sequenceDiagram\nAlice->>Bob: Hi", opts)?;
 ```
 
-<details>
-<summary><strong>Full pipeline control</strong></summary>
+// Criterion-level raw render times (no process spawn):  
+// flowchart ~1.5 ms · sequence ~0.07 ms
 
-```rust
-use mermaid_rs_renderer::{
-    parse_mermaid, compute_layout, render_svg,
-    Theme, LayoutConfig,
-};
+---
 
-let diagram = "flowchart LR; A-->B-->C";
+## Commands / CLI Reference
 
-// Stage 1: Parse
-let parsed = parse_mermaid(diagram).unwrap();
-println!("Parsed {} nodes", parsed.graph.nodes.len());
-
-// Stage 2: Layout
-let theme = Theme::modern();
-let config = LayoutConfig::default();
-let layout = compute_layout(&parsed.graph, &theme, &config);
-
-// Stage 3: Render
-let svg = render_svg(&layout, &theme, &config);
+```text
+mmdr [OPTIONS]
 ```
 
-</details>
-
-<details>
-<summary><strong>With timing information</strong></summary>
-
-```rust
-use mermaid_rs_renderer::{render_with_timing, RenderOptions};
-
-let result = render_with_timing(
-    "flowchart LR; A-->B",
-    RenderOptions::default()
-).unwrap();
-
-println!("Rendered in {:.2}ms", result.total_ms());
-println!("  Parse:  {}us", result.parse_us);
-println!("  Layout: {}us", result.layout_us);
-println!("  Render: {}us", result.render_us);
-```
-
-</details>
-
-## Development
+| Flag | Description |
+|------|-------------|
+| `-i, --input <PATH>` | Input `.mmd` file or `-` for stdin |
+| `-o, --output <PATH>` | Output file (default: stdout for SVG) |
+| `-e, --outputFormat <svg\|png>` | Output format (default: `svg`) |
+| `-c, --configFile <PATH>` | Config JSON (Mermaid-like `themeVariables`) |
+| `-t, --theme <NAME>` | `default` · `dark` · `forest` · `neutral` · `modern` |
+| `-w, --width <N>` | Width (PNG fallback / sizing) |
+| `-H, --height <N>` | Height (PNG fallback / sizing) |
+| `--preferredAspectRatio <R>` | `width:height`, `width/height`, or decimal |
+| `--nodeSpacing <N>` | Node spacing override |
+| `--rankSpacing <N>` | Rank spacing override |
+| `--dumpLayout <PATH>` | Dump computed layout JSON |
+| `--timing` | Timing JSON on stderr |
+| `--size` | Print size metadata JSON and exit |
+| `--fastText` | Approximate text metrics (ASCII-heavy speed path) |
 
 ```bash
-cargo test
-cargo run -- -i docs/diagrams/architecture.mmd -o /tmp/out.svg -e svg
+mmdr -i arch.mmd -o arch.svg -e svg --theme dark --timing
+mmdr -i arch.mmd -o arch.png -e png -w 1200
+mmdr -i arch.mmd --size
 ```
 
-**Remote build/test over SSH (optional):**
+---
+
+## Supported Diagram Types
+
+| Type | Keyword |
+|------|---------|
+| Flowcharts | `flowchart` / `graph` (TD, TB, LR, RL, BT) |
+| Sequence | `sequenceDiagram` |
+| Class | `classDiagram` |
+| State | `stateDiagram-v2` |
+| ER | `erDiagram` |
+| Pie | `pie` |
+| XY chart | `xychart` |
+| Quadrant | `quadrantChart` |
+| Gantt | `gantt` |
+| Timeline | `timeline` |
+| Journey | `journey` |
+| Mindmap | `mindmap` |
+| Git graph | `gitGraph` |
+
+Coverage continues to expand; verify your dialect against fixtures if you depend on edge syntax.
+
+---
+
+## Performance Notes
+
+| Mode | When | Speedup vs mermaid-cli |
+|------|------|------------------------|
+| Cold | First run | 100–700× |
+| Warm font cache | After first render | 500–900× |
+| `--fastText` | Tiny ASCII-heavy diagrams | 1600–2000× |
+
+Large diagrams (200 nodes) still land **~50–100×+** — layout cost grows, browser tax still dominates mermaid-cli.
+
+Memory: ~**15 MB** vs ~**300 MB** for mermaid-cli.
+
+---
+
+## Architecture
+
+```text
+.mmd / stdin
+    │
+    ▼
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐
+│ Parser      │ ──▶ │ Layout       │ ──▶ │ Render      │
+│ parser.rs   │     │ layout/*     │     │ render.rs   │
+└─────────────┘     └──────────────┘     └──────┬──────┘
+                                                │
+                                    ┌───────────┼───────────┐
+                                    ▼           ▼           ▼
+                                  SVG         PNG*      layout dump
+                                              (resvg)
+
+* feature = "png"
+```
+
+| Module | Role |
+|--------|------|
+| `parser` | Mermaid → IR |
+| `layout` | Placement, routing, subgraph containment |
+| `render` | SVG emit (+ optional PNG) |
+| `theme` / `config` | Themes + Mermaid-like variables |
+| `text_metrics` | Font / `--fastText` widths |
+| `cli` | `mmdr` binary |
+
+---
+
+## Troubleshooting
+
+### `mmdr: command not found`
+
 ```bash
-scripts/remote-cargo.sh test
-scripts/remote-cargo.sh build --release
-scripts/remote-cargo.sh bench --bench renderer
-
-# Optional override
-MMDR_REMOTE_HOST=my-builder scripts/remote-cargo.sh test
+cargo install mermaid-rs-renderer
+# ensure ~/.cargo/bin is on PATH
+export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
-The wrapper uses `rsync` + `ssh` and keeps host/IP details in your local environment
-or `~/.ssh/config`, not in this repository. By default it syncs into an isolated
-directory under remote `~/.cache` with `rsync --delete`, so it will not
-touch your normal remote working copy unless you set `MMDR_REMOTE_DIR` to that path.
+### PNG output fails / feature missing
 
-**Benchmarks:**
+Build with default features (includes `png`), or:
+
 ```bash
-cargo bench --bench renderer              # Microbenchmarks
-cargo build --release && python scripts/bench_compare.py  # vs mermaid-cli
+cargo install mermaid-rs-renderer --features png
 ```
 
-Release process: see [docs/release.md](https://github.com/1jehuang/mermaid-rs-renderer/blob/master/docs/release.md).
+### Labels look wrong with `--fastText`
+
+`--fastText` uses approximate ASCII widths. For CJK / proportional fonts, omit the flag.
+
+### Visual mismatch vs mermaid-cli
+
+Expected for some edge cases. Diff golden SVGs/PNGs in CI if pixel identity matters:
+
+```bash
+mmdr -i fixture.mmd -o out.svg -e svg
+diff -u golden.svg out.svg
+```
+
+### Parse errors on newer Mermaid syntax
+
+File an issue with a minimal `.mmd` repro. Not every experimental mermaid-js extension is implemented yet.
+
+---
+
+## Limitations
+
+### What mmdr Doesn't Do (Yet)
+
+- **Not a full Mermaid JS runtime** — no browser plugins / live click handlers
+- **Visual parity** is improving fast but not every edge case matches mermaid-cli
+- **`--fastText`** is calibrated for ASCII — non-Latin labels may shift
+
+### Known Limitations
+
+| Capability | Current state | Notes |
+|------------|---------------|-------|
+| Diagram coverage | ✅ Broad | Verify your dialect |
+| Pixel-perfect parity | ⚠️ Partial | Use golden diffs |
+| Remote Kroki-style API | ❌ | Library/CLI only |
+| JS plugin ecosystem | ❌ | Out of scope |
+
+---
+
+## FAQ
+
+### Drop-in for mermaid-cli?
+
+Same SVG *goal*, different pipeline. Diff golden images in CI if pixel-perfect parity matters.
+
+### Why so much faster?
+
+No Chromium process spawn. Native parse + layout + SVG emit.
+
+### Embed in a server?
+
+Yes — use as a Rust library to avoid CLI spawn entirely. Disable default features for a thinner dependency graph.
+
+### Themes?
+
+```bash
+mmdr -i d.mmd -o d.svg --theme dark
+mmdr -i d.mmd -o d.svg --theme forest
+```
+
+Custom: pass `--configFile` with Mermaid-like `themeVariables`.
+
+### Upstream vs this fork?
+
+Packaging/Homebrew often tracks `1jehuang/mermaid-rs-renderer`. This repository is `quangdang46/mermaid-rs-renderer` with the same `mmdr` CLI surface.
+
+---
+
+## About Contributions
+
+Please don't take this the wrong way, but I do not accept outside contributions for any of my projects. I simply don't have the mental bandwidth to review anything, and it's my name on the thing, so I'm responsible for any problems it causes; thus, the risk-reward is highly asymmetric from my perspective. I'd also have to worry about other "stakeholders," which seems unwise for tools I mostly make for myself for free. Feel free to submit issues, and even PRs if you want to illustrate a proposed fix, but know I won't merge them directly. Instead, I'll have Claude or Codex review submissions via `gh` and independently decide whether and how to address them. Bug reports in particular are welcome. Sorry if this offends, but I want to avoid wasted time and hurt feelings. I understand this isn't in sync with the prevailing open-source ethos that seeks community contributions, but it's the only way I can move at this velocity and keep my sanity.
+
+---
 
 ## License
 
-MIT
+[MIT](LICENSE)
+
+---
+
+<div align="center">
+
+**Native Mermaid. Browser-free. Agent-friendly.**
+
+</div>
