@@ -3,12 +3,13 @@ use std::collections::BTreeMap;
 use crate::config::LayoutConfig;
 use crate::ir::{DiagramKind, Graph};
 
-use super::super::{EdgeLayout, NodeLayout, TextBlock, resolve_edge_style};
 use super::super::types::SubgraphLayout;
+use super::super::{EdgeLayout, NodeLayout, TextBlock, resolve_edge_style};
 use super::path_cleanup::{
     deoverlap_flowchart_paths, detour_flowchart_paths_around_foreign_subgraphs,
     detour_flowchart_paths_around_non_endpoint_nodes, reduce_orthogonal_path_crossings,
     simplify_flowchart_axis_oscillations, simplify_flowchart_detour_rectangles,
+    straighten_aligned_rank_handoffs,
 };
 
 pub(in crate::layout) fn apply_edge_path_cleanup(
@@ -22,6 +23,9 @@ pub(in crate::layout) fn apply_edge_path_cleanup(
         reduce_orthogonal_path_crossings(graph, nodes, routed_points, config);
         deoverlap_flowchart_paths(graph, nodes, routed_points, config);
         simplify_flowchart_detour_rectangles(graph, nodes, routed_points);
+        // Straighten short center-aligned handoffs (2-bend doglegs) that the
+        // ≥4-bend rectangle simplifier skips — e.g. spine entry into a subgraph.
+        straighten_aligned_rank_handoffs(graph, nodes, routed_points);
         simplify_flowchart_axis_oscillations(routed_points);
         detour_flowchart_paths_around_non_endpoint_nodes(graph, nodes, routed_points, config);
         detour_flowchart_paths_around_foreign_subgraphs(
@@ -40,6 +44,11 @@ pub(in crate::layout) fn apply_edge_path_cleanup(
         if graph.kind == DiagramKind::Er {
             deoverlap_flowchart_paths(graph, nodes, routed_points, config);
         }
+        // Class/ER/State share the flowchart router but previously skipped the
+        // non-endpoint node detour. On Linux font metrics, class diagrams can
+        // still leave a residual edge-through-node (hard_gate edge_node_crossings).
+        // Run the same detour pass used for flowcharts so the hard gate stays green.
+        detour_flowchart_paths_around_non_endpoint_nodes(graph, nodes, routed_points, config);
         // Rank-adjacent ports can differ by a fraction of a pixel on the cross
         // axis, which turns visually straight connectors into two-bend doglegs.
         // Collapse those near-axis-aligned paths the same way flowcharts do.

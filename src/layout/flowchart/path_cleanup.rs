@@ -1280,6 +1280,96 @@ pub(in crate::layout) fn simplify_flowchart_axis_oscillations(
     }
 }
 
+/// Collapse multi-bend routes between axis-aligned neighbor nodes into a
+/// straight handoff when the node centers share a main-axis column/row.
+///
+/// `simplify_flowchart_detour_rectangles` only considers paths with ≥4 bends,
+/// so a common 2-bend dogleg between vertically stacked nodes (e.g. E→F into a
+/// subgraph under Theme::modern) survives into the hard/visual tests. This pass
+/// catches those short handoffs without undoing intentional detours.
+pub(in crate::layout) fn straighten_aligned_rank_handoffs(
+    graph: &Graph,
+    nodes: &BTreeMap<String, NodeLayout>,
+    routed_points: &mut [Vec<(f32, f32)>],
+) {
+    const CENTER_ALIGN_TOL: f32 = 2.0;
+    const MIN_GAP: f32 = 4.0;
+
+    for idx in 0..routed_points.len() {
+        let baseline = &routed_points[idx];
+        if baseline.len() < 3 {
+            continue;
+        }
+        let from_id = graph.edges[idx].from.as_str();
+        let to_id = graph.edges[idx].to.as_str();
+        // Self-loops are never "aligned handoffs" — leave their loop geometry alone.
+        if from_id == to_id {
+            continue;
+        }
+        let Some(from) = nodes.get(from_id) else {
+            continue;
+        };
+        let Some(to) = nodes.get(to_id) else {
+            continue;
+        };
+
+        let from_cx = from.x + from.width * 0.5;
+        let from_cy = from.y + from.height * 0.5;
+        let to_cx = to.x + to.width * 0.5;
+        let to_cy = to.y + to.height * 0.5;
+
+        let vertical_stack = (from_cx - to_cx).abs() <= CENTER_ALIGN_TOL
+            && (to.y - (from.y + from.height) >= MIN_GAP || from.y - (to.y + to.height) >= MIN_GAP);
+        let horizontal_stack = (from_cy - to_cy).abs() <= CENTER_ALIGN_TOL
+            && (to.x - (from.x + from.width) >= MIN_GAP || from.x - (to.x + to.width) >= MIN_GAP);
+
+        let candidate = if vertical_stack {
+            let x = (from_cx + to_cx) * 0.5;
+            let (start_y, end_y) = if to.y >= from.y + from.height {
+                (from.y + from.height, to.y)
+            } else {
+                (from.y, to.y + to.height)
+            };
+            compress_path(&[(x, start_y), (x, end_y)])
+        } else if horizontal_stack {
+            let y = (from_cy + to_cy) * 0.5;
+            let (start_x, end_x) = if to.x >= from.x + from.width {
+                (from.x + from.width, to.x)
+            } else {
+                (from.x, to.x + to.width)
+            };
+            compress_path(&[(start_x, y), (end_x, y)])
+        } else {
+            continue;
+        };
+
+        if candidate.len() >= baseline.len() {
+            continue;
+        }
+        if flowchart_path_hits_non_endpoint_nodes(&candidate, from_id, to_id, nodes) {
+            continue;
+        }
+
+        let mut other_segments: Vec<Segment> = Vec::new();
+        for (other_idx, path) in routed_points.iter().enumerate() {
+            if other_idx == idx {
+                continue;
+            }
+            append_path_segments(path, &mut other_segments);
+        }
+        let (base_cross, base_overlap) = edge_crossings_with_existing(baseline, &other_segments);
+        let (cand_cross, cand_overlap) = edge_crossings_with_existing(&candidate, &other_segments);
+        if cand_cross > base_cross {
+            continue;
+        }
+        if cand_cross == base_cross && cand_overlap > base_overlap + 0.05 {
+            continue;
+        }
+
+        routed_points[idx] = candidate;
+    }
+}
+
 fn detour_rectangle_simplification_candidates(points: &[(f32, f32)]) -> Vec<Vec<(f32, f32)>> {
     if points.len() != 6 {
         return Vec::new();

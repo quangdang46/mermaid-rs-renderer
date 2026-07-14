@@ -724,6 +724,43 @@ fn flowchart_label_collision_fixture_routes_around_non_endpoint_nodes() {
     }
 }
 
+/// Regression for CI hard_gate: class inheritance + composition mix used to
+/// leave a residual edge-through-node on Linux font metrics because Class
+/// post-route skipped non-endpoint detours (flowchart-only).
+#[test]
+fn class_inheritance_mix_routes_around_non_endpoint_nodes() {
+    let input = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("benches")
+            .join("fixtures")
+            .join("expanded")
+            .join("class_inheritance_mix.mmd"),
+    )
+    .unwrap();
+    let parsed = parse_mermaid(&input).unwrap();
+    let theme = Theme::modern();
+    let config = LayoutConfig::default();
+    let layout = compute_layout(&parsed.graph, &theme, &config);
+
+    for edge in &layout.edges {
+        for segment in edge.points.windows(2) {
+            for node in layout.nodes.values() {
+                if node.id == edge.from || node.id == edge.to || node.hidden {
+                    continue;
+                }
+                let rect = (node.x, node.y, node.width, node.height);
+                assert!(
+                    !segment_intersects_rect(segment[0], segment[1], rect),
+                    "edge {}->{} crosses non-endpoint node {}",
+                    edge.from,
+                    edge.to,
+                    node.id
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn td_loopback_uses_outer_left_ports_and_orthogonal_lane() {
     let input = r#"flowchart TD

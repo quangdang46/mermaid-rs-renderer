@@ -5300,9 +5300,10 @@ fn add_node_to_subgraphs(graph: &mut Graph, subgraph_stack: &[usize], node_id: &
     // subgraph node sets overlap and their boxes are forced to overlap.
     // Membership in the current stack chain (ancestors) is fine: that is how
     // nested subgraphs are represented here.
-    let claimed_elsewhere = graph.subgraphs.iter().enumerate().any(|(idx, sub)| {
-        !subgraph_stack.contains(&idx) && sub.nodes.iter().any(|n| n == node_id)
-    });
+    let claimed_elsewhere =
+        graph.subgraphs.iter().enumerate().any(|(idx, sub)| {
+            !subgraph_stack.contains(&idx) && sub.nodes.iter().any(|n| n == node_id)
+        });
     if claimed_elsewhere {
         return;
     }

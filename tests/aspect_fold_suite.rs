@@ -13,13 +13,16 @@ use mermaid_rs_renderer::layout::{Layout, compute_layout, validate_layout_invari
 use mermaid_rs_renderer::parser::parse_mermaid;
 use mermaid_rs_renderer::theme::Theme;
 
-const CHAIN_LR: &str = "flowchart LR\n  A[Start] --> B[Parse] --> C[Layout] --> D[Route] --> E[Render] --> F[Done]\n";
+const CHAIN_LR: &str =
+    "flowchart LR\n  A[Start] --> B[Parse] --> C[Layout] --> D[Route] --> E[Render] --> F[Done]\n";
 const GOAL_4_3: f32 = 4.0 / 3.0;
 
 fn layout_with_goal(source: &str, goal: Option<f32>) -> Layout {
     let parsed = parse_mermaid(source).expect("fixture should parse");
-    let mut config = LayoutConfig::default();
-    config.preferred_aspect_ratio = goal;
+    let config = LayoutConfig {
+        preferred_aspect_ratio: goal,
+        ..LayoutConfig::default()
+    };
     compute_layout(&parsed.graph, &Theme::mermaid_default(), &config)
 }
 
@@ -144,7 +147,7 @@ fn linear_lr_chain_wraps_toward_goal() {
     // means [goal/2, goal*2]; the fold plus the stretch refiner should land
     // well inside that.
     assert!(
-        ratio >= GOAL_4_3 / 2.0 && ratio <= GOAL_4_3 * 2.0,
+        (GOAL_4_3 / 2.0..=GOAL_4_3 * 2.0).contains(&ratio),
         "wrapped chain aspect {ratio} should be within 2x of goal {GOAL_4_3}"
     );
 
@@ -182,8 +185,10 @@ fn no_goal_layout_identical_to_pre_fold_pipeline() {
     // across machines. Regenerate with:
     //   UPDATE_ASPECT_FOLD_GOLDEN=1 cargo test --test aspect_fold_suite
     let parsed = parse_mermaid(CHAIN_LR).expect("fixture should parse");
-    let mut config = LayoutConfig::default();
-    config.fast_text_metrics = true;
+    let config = LayoutConfig {
+        fast_text_metrics: true,
+        ..LayoutConfig::default()
+    };
     let layout = compute_layout(&parsed.graph, &Theme::mermaid_default(), &config);
     let serialized = serialize_layout(&layout);
 
