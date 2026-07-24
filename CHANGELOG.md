@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+## v0.3.2 (2026-07-24)
+
+### Face / embed PNG API (secure raster)
+- Added `render_png_bytes` / `rasterize_svg_to_png` returning in-memory PNG bytes + dimensions (`RenderedPng`).
+- Secure raster profile: bundled Roboto Regular, generics pinned to it, `file://` / remote image hrefs refused (data-URLs still work), 32 MP + 16 384px axis caps.
+- Resource caps via `RenderLimits` (default 64 KiB source) → typed `RenderError::ResourceLimit`.
+- Face-style sizing: `PngRenderParams` (`target_width_px` / `min_width_px` / `max_height_px` / `scale`) plus `resolve_output_dimensions` / `resolve_render_dimensions` helpers (and optional `render_png_bytes_with_sized_svg`).
+- Stable terminal surfaces: `Theme::face_light` / `Theme::face_dark` (`#FAFAFA` / `#18181B`) and `PngRenderParams::for_terminal` / `for_os_viewer`.
+- Typed `RenderError` taxonomy: Parse / Layout / Rasterize / Unsupported / ResourceLimit.
+
+### Deferred (P2)
+- Fixture parity smoke suite for flowchart + sequence vs Face/`mermaid-to-svg`.
+- Dialect fidelity notes / gaps for C4, sankey, kanban, packet/radar/block betas.
+
 ## v0.3.0 (2026-07-02)
 
 ### Render Size Metadata API

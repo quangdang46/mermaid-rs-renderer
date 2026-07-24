@@ -97,6 +97,8 @@ pub mod ir;
 pub mod layout;
 pub mod layout_dump;
 pub mod parser;
+#[cfg(feature = "png")]
+pub mod png;
 pub mod render;
 mod text_metrics;
 pub mod theme;
@@ -105,7 +107,7 @@ pub mod validator;
 
 // Re-export commonly used types at crate root for ergonomic library usage
 pub use config::{Config, LayoutConfig, RenderConfig};
-pub use error::ParseError;
+pub use error::{ParseError, RenderError};
 pub use ir::{
     DiagramKind, Direction, Edge, EdgeArrowhead, EdgeDecoration, EdgeStyle, Graph, Node, NodeLink,
     NodeShape, SequenceActivation, SequenceActivationKind, SequenceBox, StateNote,
@@ -116,6 +118,13 @@ pub use layout::{
     compute_layout_with_metrics,
 };
 pub use parser::{ParseOutput, parse_mermaid};
+#[cfg(feature = "png")]
+pub use png::{
+    DEFAULT_MAX_SOURCE_BYTES, FACE_DARK_SURFACE, FACE_LIGHT_SURFACE, MAX_OUTPUT_DIMENSION,
+    MAX_OUTPUT_MEGAPIXELS, PngRenderParams, RenderLimits, RenderedPng, Rgba, clamp_dimensions,
+    effective_scale, face_dark_theme, face_light_theme, rasterize_svg_to_png, render_png_bytes,
+    render_png_bytes_with_sized_svg, resolve_output_dimensions, resolve_render_dimensions,
+};
 #[cfg(feature = "png")]
 pub use render::write_output_png;
 pub use render::{SvgDimensions, measure_svg_dimensions, render_svg, write_output_svg};

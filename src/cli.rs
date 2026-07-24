@@ -33,7 +33,7 @@ pub struct Args {
     #[arg(short = 'c', long = "configFile")]
     pub config: Option<PathBuf>,
 
-    /// Built-in theme preset (default, dark, forest, neutral, modern).
+    /// Built-in theme preset (default, dark, forest, neutral, modern, face-light, face-dark).
     /// Applied before config-file/init themeVariables overrides.
     #[arg(short = 't', long = "theme")]
     pub theme: Option<String>,
