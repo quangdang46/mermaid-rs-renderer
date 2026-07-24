@@ -415,6 +415,22 @@ impl Theme {
         }
     }
 
+    /// Face / terminal light surface: modern palette with opaque `#FAFAFA`
+    /// background so PNG flushes against typical light scrollback.
+    pub fn face_light() -> Self {
+        let mut theme = Self::modern();
+        theme.background = "#FAFAFA".to_string();
+        theme
+    }
+
+    /// Face / terminal dark surface: dark palette with opaque `#18181B`
+    /// background so PNG flushes against typical dark scrollback.
+    pub fn face_dark() -> Self {
+        let mut theme = Self::dark();
+        theme.background = "#18181B".to_string();
+        theme
+    }
+
     /// Resolve a named built-in theme preset. Accepted names match the
     /// mermaid `theme` values plus this renderer's own presets.
     pub fn from_name(name: &str) -> Option<Self> {
@@ -424,6 +440,8 @@ impl Theme {
             "dark" => Some(Self::dark()),
             "forest" => Some(Self::forest()),
             "neutral" => Some(Self::neutral()),
+            "face-light" | "face_light" => Some(Self::face_light()),
+            "face-dark" | "face_dark" => Some(Self::face_dark()),
             _ => None,
         }
     }

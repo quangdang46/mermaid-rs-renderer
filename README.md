@@ -218,6 +218,31 @@ let opts = RenderOptions::default();
 let svg = render_with_options("sequenceDiagram\nAlice->>Bob: Hi", opts)?;
 ```
 
+### Secure in-memory PNG (embed / Face)
+
+Requires the `png` feature (on by default). Prefer this over `write_output_png` when rendering **untrusted** Mermaid: bundled font, no remote/`file://` image fetch, source + megapixel caps, typed `RenderError`.
+
+```rust
+use mermaid_rs_renderer::{
+    render_png_bytes, PngRenderParams, RenderLimits, RenderOptions, Theme,
+};
+
+let opts = RenderOptions {
+    theme: Theme::face_dark(), // #18181B terminal surface
+    ..RenderOptions::default()
+};
+let params = PngRenderParams::for_terminal(true); // opaque dark fill + 1024px target width
+let rendered = render_png_bytes(
+    "flowchart LR\nA-->B",
+    opts,
+    &params,
+    &RenderLimits::default(), // 64 KiB source cap
+)?;
+let (png, width_px, height_px) = rendered.into_parts();
+```
+
+Sizing helpers mirror Face `RenderParams`: `target_width_px`, `min_width_px`, `max_height_px`, `scale`, plus `resolve_output_dimensions` / `resolve_render_dimensions`. Themes: `Theme::face_light` (`#FAFAFA`) and `Theme::face_dark` (`#18181B`).
+
 // Criterion-level raw render times (no process spawn):  
 // flowchart ~1.5 ms · sequence ~0.07 ms
 
@@ -235,7 +260,7 @@ mmdr [OPTIONS]
 | `-o, --output <PATH>` | Output file (default: stdout for SVG) |
 | `-e, --outputFormat <svg\|png>` | Output format (default: `svg`) |
 | `-c, --configFile <PATH>` | Config JSON (Mermaid-like `themeVariables`) |
-| `-t, --theme <NAME>` | `default` · `dark` · `forest` · `neutral` · `modern` |
+| `-t, --theme <NAME>` | `default` · `dark` · `forest` · `neutral` · `modern` · `face-light` · `face-dark` |
 | `-w, --width <N>` | Width (PNG fallback / sizing) |
 | `-H, --height <N>` | Height (PNG fallback / sizing) |
 | `--preferredAspectRatio <R>` | `width:height`, `width/height`, or decimal |

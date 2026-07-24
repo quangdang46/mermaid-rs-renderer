@@ -1,4 +1,4 @@
-//! Structured parse errors for mermaid diagrams.
+//! Structured parse and render errors for mermaid diagrams.
 //!
 //! The library historically returns [`anyhow::Error`] for every
 //! parse or layout failure. That is ergonomic but erases error
@@ -6,6 +6,10 @@
 //! typed enum so callers (CMSs, editors, LLM correction loops)
 //! can classify failures and produce actionable diagnostics
 //! without scraping error strings.
+//!
+//! [`RenderError`] is the embedder-facing taxonomy used by the
+//! secure PNG path ([`crate::render_png_bytes`]): parse vs layout
+//! vs rasterize vs unsupported vs resource limit.
 //!
 //! See `docs/error_tracking.md` for the line/column conventions
 //! detection paths follow.
@@ -89,8 +93,38 @@ pub enum ParseError {
     },
 }
 
+/// Typed failures from the embed-oriented render / PNG pipeline.
+///
+/// Prefer matching on the variant for telemetry and fallback
+/// policy; every variant is also a [`std::error::Error`].
+/// This enum is `#[non_exhaustive]` so new kinds can land without
+/// a breaking change.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum RenderError {
+    /// Source could not be parsed into a diagram.
+    #[error(transparent)]
+    Parse(#[from] ParseError),
+
+    /// The diagram parsed but layout failed.
+    #[error("mermaid layout error: {0}")]
+    Layout(String),
+
+    /// SVG could not be rasterized to PNG (or SVG itself was invalid).
+    #[error("mermaid rasterize error: {0}")]
+    Rasterize(String),
+
+    /// Input is not supported by this engine / path.
+    #[error("mermaid render unsupported: {0}")]
+    Unsupported(String),
+
+    /// A resource cap was breached (source bytes, output size, …).
+    #[error("mermaid resource limit: {0}")]
+    ResourceLimit(String),
+}
+
 /// Bridge [`ParseError`] into [`anyhow::Error`] so the legacy
-/// [`render`]/[`render_with_options`] façade can keep its
+/// [`render`] / [`render_with_options`] façade can keep its
 /// `anyhow::Result<_>` signature.
 ///
 /// The derived [`std::error::Error`] from `thiserror` is enough
@@ -109,6 +143,7 @@ mod anyhow_bridge_is_derived {
     const _: fn() = || {
         fn assert_error<E: std::error::Error + Send + Sync + 'static>() {}
         assert_error::<ParseError>();
+        assert_error::<super::RenderError>();
     };
 }
 
@@ -154,5 +189,29 @@ mod tests {
     fn parse_error_is_anyhow_convertible() {
         let e: anyhow::Error = ParseError::UnclosedSubgraph { opened_at: 2 }.into();
         assert!(e.to_string().contains("unclosed subgraph"));
+    }
+
+    #[test]
+    fn render_error_display_kinds() {
+        assert!(
+            RenderError::ResourceLimit("too big".into())
+                .to_string()
+                .contains("resource limit")
+        );
+        assert!(
+            RenderError::Rasterize("boom".into())
+                .to_string()
+                .contains("rasterize")
+        );
+        assert!(
+            RenderError::Unsupported("x".into())
+                .to_string()
+                .contains("unsupported")
+        );
+        assert!(
+            RenderError::Layout("x".into())
+                .to_string()
+                .contains("layout")
+        );
     }
 }
