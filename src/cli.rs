@@ -1,5 +1,6 @@
 use crate::config::{Config, load_config_with_theme};
 use crate::layout::compute_layout_with_metrics;
+use crate::layout::validate_layout_invariants;
 use crate::layout_dump::write_layout_dump;
 use crate::parser::parse_mermaid;
 #[cfg(feature = "png")]
@@ -73,6 +74,14 @@ pub struct Args {
     /// Use fast text metrics (approximate widths) for speed
     #[arg(long = "fastText")]
     pub fast_text_metrics: bool,
+
+    /// Validate layout invariants after computation and exit with errors if violations found
+    #[arg(long = "checkInvariants")]
+    pub check_invariants: bool,
+
+    /// Output the decision ledger as JSON (includes trace-id and per-phase records)
+    #[arg(long = "decisions")]
+    pub decisions: bool,
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy)]
@@ -189,7 +198,7 @@ pub fn run() -> Result<()> {
     };
 
     if diagrams.len() == 1 {
-        let t_parse_start = std::time::Instant::now();
+        let t_parse_start = web_time::Instant::now();
         let parsed = parse_mermaid(&diagrams[0])?;
         let parse_us = t_parse_start.elapsed().as_micros();
 
@@ -198,10 +207,28 @@ pub fn run() -> Result<()> {
             config = merge_init_config(config, init_cfg);
         }
 
-        let t_layout_start = std::time::Instant::now();
-        let (layout, layout_stages) =
+        let t_layout_start = web_time::Instant::now();
+        let (layout, layout_stages, ledger) =
             compute_layout_with_metrics(&parsed.graph, &config.theme, &config.layout);
         let layout_us = t_layout_start.elapsed().as_micros();
+
+        if args.check_invariants {
+            let inv_result = validate_layout_invariants(&layout);
+            if let Err(errors) = inv_result {
+                eprintln!("Layout invariant violations:");
+                for error in &errors {
+                    eprintln!("  {}: {}", error.path, error.message);
+                }
+                return Err(anyhow::anyhow!(
+                    "{} layout invariant violation(s) detected",
+                    errors.len()
+                ));
+            }
+        }
+
+        if args.decisions {
+            eprintln!("{}", serde_json::to_string_pretty(&ledger)?);
+        }
 
         if let Some(outputs) = layout_outputs.as_ref()
             && let Some(path) = outputs.first()
@@ -215,7 +242,7 @@ pub fn run() -> Result<()> {
             return Ok(());
         }
 
-        let t_render_start = std::time::Instant::now();
+        let t_render_start = web_time::Instant::now();
         let svg =
             render_svg_with_dimensions(&layout, &config.theme, &config.layout, explicit_dimensions);
         let render_us = t_render_start.elapsed().as_micros();
@@ -265,7 +292,7 @@ pub fn run() -> Result<()> {
             if let Some(init_cfg) = parsed.init_config.clone() {
                 config = merge_init_config(config, init_cfg);
             }
-            let (layout, _) =
+            let (layout, _, _) =
                 compute_layout_with_metrics(&parsed.graph, &config.theme, &config.layout);
             let dimensions = measure_svg_dimensions(&layout, &config.layout, explicit_dimensions);
             sizes.push(serde_json::json!({
@@ -285,7 +312,7 @@ pub fn run() -> Result<()> {
         if let Some(init_cfg) = parsed.init_config.clone() {
             config = merge_init_config(config, init_cfg);
         }
-        let (layout, _layout_stages) =
+        let (layout, _, _) =
             compute_layout_with_metrics(&parsed.graph, &config.theme, &config.layout);
         if let Some(outputs) = layout_outputs.as_ref()
             && let Some(path) = outputs.get(idx)

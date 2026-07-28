@@ -35,6 +35,36 @@ pub enum DiagramKind {
     XYChart,
 }
 
+impl std::fmt::Display for DiagramKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Flowchart => write!(f, "flowchart"),
+            Self::Class => write!(f, "class"),
+            Self::State => write!(f, "state"),
+            Self::Sequence => write!(f, "sequence"),
+            Self::Er => write!(f, "er"),
+            Self::Pie => write!(f, "pie"),
+            Self::Mindmap => write!(f, "mindmap"),
+            Self::Journey => write!(f, "journey"),
+            Self::Timeline => write!(f, "timeline"),
+            Self::Gantt => write!(f, "gantt"),
+            Self::Requirement => write!(f, "requirement"),
+            Self::GitGraph => write!(f, "git-graph"),
+            Self::C4 => write!(f, "c4"),
+            Self::Sankey => write!(f, "sankey"),
+            Self::Quadrant => write!(f, "quadrant"),
+            Self::ZenUML => write!(f, "zenuml"),
+            Self::Block => write!(f, "block"),
+            Self::Packet => write!(f, "packet"),
+            Self::Kanban => write!(f, "kanban"),
+            Self::Architecture => write!(f, "architecture"),
+            Self::Radar => write!(f, "radar"),
+            Self::Treemap => write!(f, "treemap"),
+            Self::XYChart => write!(f, "xychart"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SequenceFrameKind {
     Alt,

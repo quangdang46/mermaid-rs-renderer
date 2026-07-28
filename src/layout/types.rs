@@ -1,6 +1,89 @@
 use std::collections::BTreeMap;
 
 use crate::ir::Direction;
+use serde::{Deserialize, Serialize};
+
+/// A unique trace identifier for a single diagram render pipeline invocation.
+///
+/// Generated once per `compute_layout` call and threaded through every phase
+/// so that decision records can be correlated back to a specific render run.
+///
+/// This mirrors the `franken_kernel::TraceId` pattern from frankenmermaid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TraceId(pub u128);
+
+impl TraceId {
+    /// Create a new random trace id (based on monotonic counter and process seed).
+    pub fn new() -> Self {
+        use std::sync::atomic::AtomicU64;
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let pid = std::process::id() as u128;
+        let time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed) as u128;
+        Self(pid.wrapping_mul(3).wrapping_add(time).wrapping_mul(7).wrapping_add(seq))
+    }
+}
+
+impl Default for TraceId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for TraceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:032x}", self.0)
+    }
+}
+
+/// A single decision record captured during layout computation.
+///
+/// Each decision records what was decided, why, and the measurable outcome.
+/// This is a simplified version of frankenmermaid's `MermaidLayoutDecisionRecord`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecisionEntry {
+    /// The pipeline phase this decision belongs to (e.g. "rank_assignment", "crossing_minimization", "finalize").
+    pub phase: String,
+    /// Human-readable description of what was decided.
+    pub what: String,
+    /// Why this decision was made (e.g. "selected Sugiyama algorithm for Flowchart diagram type").
+    pub rationale: String,
+    /// Optional numeric outcome for regression analysis (e.g. crossing count, edge length sum).
+    pub metric: Option<f64>,
+}
+
+/// Decision ledger that accumulates layout decisions across the pipeline.
+///
+/// Threaded through `compute_layout` so each phase can record its choices.
+/// The full ledger is available in `RenderDetailedResult` and can be dumped
+/// as JSON via the `--decisions` CLI flag.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DecisionLedger {
+    /// Unique trace identifier for this pipeline run.
+    pub trace_id: TraceId,
+    /// Decisions recorded in order of execution.
+    pub entries: Vec<DecisionEntry>,
+}
+
+impl DecisionLedger {
+    /// Record a decision entry.
+    pub fn record(&mut self, phase: &str, what: &str, rationale: &str, metric: Option<f64>) {
+        self.entries.push(DecisionEntry {
+            phase: phase.to_string(),
+            what: what.to_string(),
+            rationale: rationale.to_string(),
+            metric,
+        });
+    }
+
+    /// Convenience: record a numeric metric without extensive rationale.
+    pub fn metric(&mut self, phase: &str, name: &str, value: f64) {
+        self.record(phase, name, "", Some(value));
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct TextBlock {

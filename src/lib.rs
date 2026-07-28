@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #![allow(clippy::field_reassign_with_default)]
 #![allow(clippy::manual_strip)]
 #![allow(clippy::needless_range_loop)]
@@ -114,8 +115,9 @@ pub use ir::{
     StateNotePosition, Subgraph,
 };
 pub use layout::{
-    EdgeLayout, Layout, LayoutStageMetrics, NodeLayout, SubgraphLayout, compute_layout,
-    compute_layout_with_metrics,
+    compute_layout, compute_layout_with_ledger, compute_layout_with_metrics,
+    DecisionLedger, DecisionEntry, EdgeLayout, Layout, LayoutStageMetrics, NodeLayout,
+    SubgraphLayout, TraceId, validate_layout_invariants, LayoutInvariantError,
 };
 pub use parser::{ParseOutput, parse_mermaid};
 #[cfg(feature = "png")]
@@ -324,6 +326,8 @@ pub struct RenderDetailedResult {
     pub render_us: u128,
     /// Fine-grained layout stage timings (microseconds).
     pub layout_stages: LayoutStageMetrics,
+    /// Decision ledger recording every layout-phase decision.
+    pub decision_ledger: layout::DecisionLedger,
 }
 
 impl RenderDetailedResult {
@@ -371,14 +375,14 @@ pub fn render_with_detailed_timing(
     input: &str,
     options: RenderOptions,
 ) -> anyhow::Result<RenderDetailedResult> {
-    use std::time::Instant;
+    use web_time::Instant;
 
     let t0 = Instant::now();
     let parsed = parse_mermaid(input)?;
     let parse_us = t0.elapsed().as_micros();
 
     let t1 = Instant::now();
-    let (layout, layout_stages) =
+    let (layout, layout_stages, decision_ledger) =
         compute_layout_with_metrics(&parsed.graph, &options.theme, &options.layout);
     let layout_us = t1.elapsed().as_micros();
 
@@ -392,6 +396,7 @@ pub fn render_with_detailed_timing(
         layout_us,
         render_us,
         layout_stages,
+        decision_ledger,
     })
 }
 

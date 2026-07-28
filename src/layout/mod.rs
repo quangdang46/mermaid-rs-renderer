@@ -58,7 +58,7 @@ use crate::theme::{Theme, adjust_color, parse_color_to_hsl};
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::time::Instant;
+use web_time::Instant;
 
 // Label placement padding (resolved per diagram kind).
 // Minimum padding around the entire layout bounding box.
@@ -159,14 +159,32 @@ pub fn compute_layout(graph: &Graph, theme: &Theme, config: &LayoutConfig) -> La
     compute_layout_with_metrics(graph, theme, config).0
 }
 
+/// Compute a layout and return the decision ledger alongside the layout.
+pub fn compute_layout_with_ledger(
+    graph: &Graph,
+    theme: &Theme,
+    config: &LayoutConfig,
+) -> (Layout, DecisionLedger) {
+    let (layout, _, ledger) = compute_layout_with_metrics(graph, theme, config);
+    (layout, ledger)
+}
+
 pub fn compute_layout_with_metrics(
     graph: &Graph,
     theme: &Theme,
     config: &LayoutConfig,
-) -> (Layout, LayoutStageMetrics) {
+) -> (Layout, LayoutStageMetrics, DecisionLedger) {
     let graph = normalize_graph_for_layout(graph);
     let graph = graph.as_ref();
     let mut stage_metrics = LayoutStageMetrics::default();
+    let mut ledger = DecisionLedger::default();
+    let _trace_id = ledger.trace_id.to_string();
+    ledger.record(
+        "dispatch",
+        &format!("diagram_type={}", graph.kind),
+        &format!("Selected layout algorithm for {} diagram", graph.kind),
+        None,
+    );
     let mut layout = match graph.kind {
         crate::ir::DiagramKind::Sequence | crate::ir::DiagramKind::ZenUML => {
             compute_sequence_layout(graph, theme, config)
@@ -230,7 +248,7 @@ pub fn compute_layout_with_metrics(
         flowchart::stage_validation::debug_assert_no_geometry_debt("render-final", report);
     }
 
-    (layout, stage_metrics)
+    (layout, stage_metrics, ledger)
 }
 
 fn normalize_graph_for_layout(graph: &Graph) -> Cow<'_, Graph> {
