@@ -39,6 +39,74 @@ impl std::fmt::Display for TraceId {
     }
 }
 
+/// A render-agnostic scene description built from Layout.
+/// Intermediate representation between layout computation and
+/// any render backend (SVG, terminal, canvas).
+#[derive(Debug, Clone, Default)]
+pub struct RenderScene {
+    pub width: f32,
+    pub height: f32,
+    pub groups: Vec<RenderGroup>,
+}
+
+/// A named group of render items (e.g. a subgraph, a node cluster).
+#[derive(Debug, Clone)]
+pub struct RenderGroup {
+    pub label: Option<String>,
+    pub items: Vec<RenderItem>,
+}
+
+/// A single renderable primitive in the scene.
+#[derive(Debug, Clone)]
+pub enum RenderItem {
+    Rect {
+        x: f32, y: f32, w: f32, h: f32,
+        rx: Option<f32>,
+        fill: Option<String>,
+        stroke: Option<String>,
+        stroke_width: f32,
+    },
+    Circle {
+        cx: f32, cy: f32, r: f32,
+        fill: Option<String>,
+        stroke: Option<String>,
+        stroke_width: f32,
+    },
+    Line {
+        x1: f32, y1: f32, x2: f32, y2: f32,
+        stroke: Option<String>,
+        stroke_width: f32,
+    },
+    Polyline {
+        points: Vec<(f32, f32)>,
+        stroke: Option<String>,
+        stroke_width: f32,
+        fill: Option<String>,
+    },
+    Text {
+        x: f32, y: f32,
+        text: String,
+        font_size: f32,
+        font_family: Option<String>,
+        fill: Option<String>,
+        anchor: TextAnchor,
+    },
+    Path {
+        d: String,
+        fill: Option<String>,
+        stroke: Option<String>,
+        stroke_width: f32,
+    },
+}
+
+/// Text anchor horizontal alignment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextAnchor {
+    Start,
+    Middle,
+    End,
+}
+
 /// A single decision record captured during layout computation.
 ///
 /// Each decision records what was decided, why, and the measurable outcome.
@@ -704,4 +772,178 @@ pub struct GanttTaskLayout {
 pub struct GanttTick {
     pub x: f32,
     pub label: String,
+}
+
+/// Layout algorithm strategy, auto-selected by diagram type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum LayoutAlgorithm {
+    /// Sugiyama layered layout (flowcharts, class, state, ER)
+    #[default]
+    Sugiyama,
+    /// Force-directed placement (simple graphs, mindmaps)
+    ForceDirected,
+    /// Tree layout (mindmap, timeline)
+    Tree,
+    /// Radial layout around a center
+    Radial,
+    /// Sequence diagram layout (top-to-bottom lifelines)
+    Sequence,
+    /// Pie chart layout (circular)
+    Pie,
+    /// Sankey diagram layout (flow magnitude)
+    Sankey,
+    /// Grid layout (block, kanban)
+    Grid,
+    /// Gantt chart timeline layout
+    Gantt,
+    /// Git graph layout (branch topology)
+    GitGraph,
+    /// Quadrant chart layout
+    Quadrant,
+    /// XY chart layout (cartesian)
+    XYChart,
+    /// Journey map layout
+    Journey,
+    /// C4 architecture layout
+    C4,
+    /// Error fallback layout
+    Error,
+}
+
+impl LayoutAlgorithm {
+    pub fn auto_select(kind: &crate::ir::DiagramKind) -> Self {
+        match kind {
+            crate::ir::DiagramKind::Flowchart
+            | crate::ir::DiagramKind::Class
+            | crate::ir::DiagramKind::State
+            | crate::ir::DiagramKind::Er
+            | crate::ir::DiagramKind::Requirement
+            | crate::ir::DiagramKind::Packet => Self::Sugiyama,
+            crate::ir::DiagramKind::Sequence | crate::ir::DiagramKind::ZenUML => Self::Sequence,
+            crate::ir::DiagramKind::Pie => Self::Pie,
+            crate::ir::DiagramKind::Mindmap => Self::Tree,
+            crate::ir::DiagramKind::Journey => Self::Journey,
+            crate::ir::DiagramKind::Timeline => Self::Tree,
+            crate::ir::DiagramKind::Gantt => Self::Gantt,
+            crate::ir::DiagramKind::GitGraph => Self::GitGraph,
+            crate::ir::DiagramKind::C4 => Self::C4,
+            crate::ir::DiagramKind::Sankey => Self::Sankey,
+            crate::ir::DiagramKind::Quadrant => Self::Quadrant,
+            crate::ir::DiagramKind::Block => Self::Grid,
+            crate::ir::DiagramKind::Kanban => Self::Grid,
+            crate::ir::DiagramKind::Architecture => Self::Grid,
+            crate::ir::DiagramKind::Radar => Self::Pie,
+            crate::ir::DiagramKind::Treemap => Self::Grid,
+            crate::ir::DiagramKind::XYChart => Self::XYChart,
+        }
+    }
+}
+
+/// Cycle-breaking strategy for directed graphs with cycles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CycleStrategy {
+    /// Greedy feedback arc set (fast, reasonable quality)
+    #[default]
+    Greedy,
+    /// DFS back-edge detection
+    DfsBackEdge,
+    /// Minimum feedback arc set approximation
+    Mfas,
+    /// Full SCC-aware cycle detection with cluster collapse
+    CycleAwareScc,
+}
+
+impl RenderScene {
+    /// Build a RenderScene from a completed Layout.
+    pub fn from_layout(layout: &Layout, theme: &crate::theme::Theme, _config: &crate::config::LayoutConfig) -> Self {
+        let mut scene = RenderScene {
+            width: layout.width,
+            height: layout.height,
+            groups: Vec::new(),
+        };
+
+        // Subgraph backgrounds (drawn first)
+        for sg in &layout.subgraphs {
+            let mut group = RenderGroup {
+                label: Some(sg.label.clone()),
+                items: Vec::new(),
+            };
+            group.items.push(RenderItem::Rect {
+                x: sg.x, y: sg.y, w: sg.width, h: sg.height,
+                rx: Some(8.0),
+                fill: Some(sg.style.fill.clone().unwrap_or_else(|| "#ffffff".to_string())),
+                stroke: Some(sg.style.stroke.clone().unwrap_or_else(|| "#cccccc".to_string())),
+                stroke_width: sg.style.stroke_width.unwrap_or(1.0),
+            });
+            // Subgraph label
+            group.items.push(RenderItem::Text {
+                x: sg.x + 10.0,
+                y: sg.y + sg.label_block.height + 4.0,
+                text: sg.label_block.lines.join(" "),
+                font_size: 14.0,
+                font_family: None,
+                fill: Some(theme.text_color.clone()),
+                anchor: TextAnchor::Start,
+            });
+            scene.groups.push(group);
+        }
+
+        // Nodes
+        let mut node_group = RenderGroup { label: Some("nodes".to_string()), items: Vec::new() };
+        for node in layout.nodes.values() {
+            if node.hidden { continue; }
+            let rx = match node.shape {
+                crate::ir::NodeShape::RoundRect | crate::ir::NodeShape::Stadium => Some(6.0),
+                crate::ir::NodeShape::Diamond => None,
+                _ => None,
+            };
+            node_group.items.push(RenderItem::Rect {
+                x: node.x, y: node.y, w: node.width, h: node.height,
+                rx,
+                fill: Some(node.style.fill.clone().unwrap_or_else(|| theme.primary_color.clone())),
+                stroke: Some(node.style.stroke.clone().unwrap_or_else(|| theme.primary_border_color.clone())),
+                stroke_width: node.style.stroke_width.unwrap_or(2.0),
+            });
+            node_group.items.push(RenderItem::Text {
+                x: node.x + node.width / 2.0,
+                y: node.y + node.height / 2.0 + node.label.height / 4.0,
+                text: node.label.lines.join(" "),
+                font_size: 14.0,
+                font_family: None,
+                fill: Some(node.style.text_color.clone().unwrap_or_else(|| theme.primary_text_color.clone())),
+                anchor: TextAnchor::Middle,
+            });
+        }
+        scene.groups.push(node_group);
+
+        // Edges
+        let mut edge_group = RenderGroup { label: Some("edges".to_string()), items: Vec::new() };
+        for edge in &layout.edges {
+            if edge.points.len() >= 2 {
+                edge_group.items.push(RenderItem::Polyline {
+                    points: edge.points.clone(),
+                    stroke: Some(theme.line_color.clone()),
+                    stroke_width: 2.0,
+                    fill: None,
+                });
+                // Edge label
+                if let Some(label) = &edge.label {
+                    if let Some(anchor) = edge.label_anchor {
+                        edge_group.items.push(RenderItem::Text {
+                            x: anchor.0,
+                            y: anchor.1 + label.height / 4.0,
+                            text: label.lines.join(" "),
+                            font_size: 12.0,
+                            font_family: None,
+                            fill: Some(theme.text_color.clone()),
+                            anchor: TextAnchor::Middle,
+                        });
+                    }
+                }
+            }
+        }
+        scene.groups.push(edge_group);
+
+        scene
+    }
 }

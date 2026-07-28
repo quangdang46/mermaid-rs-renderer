@@ -1,3 +1,4 @@
+use crate::layout::{CycleStrategy, LayoutAlgorithm};
 use crate::theme::Theme;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -758,6 +759,10 @@ pub struct LayoutConfig {
     pub treemap: TreemapConfig,
     pub flowchart: FlowchartLayoutConfig,
     pub timeline: TimelineConfig,
+    /// Layout algorithm override. None = auto-select by diagram type.
+    pub layout_algorithm: Option<LayoutAlgorithm>,
+    /// Cycle-breaking strategy for directed graphs.
+    pub cycle_strategy: CycleStrategy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -792,6 +797,8 @@ impl Default for LayoutConfig {
             treemap: TreemapConfig::default(),
             flowchart: FlowchartLayoutConfig::default(),
             timeline: TimelineConfig::default(),
+            layout_algorithm: None,
+            cycle_strategy: CycleStrategy::default(),
         }
     }
 }

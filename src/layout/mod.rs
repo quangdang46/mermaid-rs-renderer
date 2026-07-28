@@ -185,6 +185,9 @@ pub fn compute_layout_with_metrics(
         &format!("Selected layout algorithm for {} diagram", graph.kind),
         None,
     );
+    // Record selected algorithm in ledger
+    let selected_algo = config.layout_algorithm.unwrap_or_else(|| LayoutAlgorithm::auto_select(&graph.kind));
+    ledger.record("algorithm", &format!("{:?}", selected_algo), &format!("Auto-selected {:?} for {:?} diagram", selected_algo, graph.kind), None);
     let mut layout = match graph.kind {
         crate::ir::DiagramKind::Sequence | crate::ir::DiagramKind::ZenUML => {
             compute_sequence_layout(graph, theme, config)

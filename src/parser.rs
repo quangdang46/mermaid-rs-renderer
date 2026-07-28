@@ -49,41 +49,114 @@ static ARROW_TOKEN_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"<[-.=ox]*[-=]+[-.=ox]*>|<[-.=ox]*[-=]+[-.=ox]*|[-.=ox]*[-=]+[-.=ox]*>|[-.=ox]*[-=]+[-.=ox]*").unwrap()
 });
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ParseOutput {
     pub graph: Graph,
     pub init_config: Option<serde_json::Value>,
+    /// Non-fatal diagnostics (warnings, fuzzy match notes, etc.)
+    pub diagnostics: Vec<crate::error::ParseDiagnostic>,
+}
+
+impl ParseOutput {
+    /// Create a new ParseOutput with the given graph and init_config.
+    pub fn new(graph: Graph, init_config: Option<serde_json::Value>) -> Self {
+        Self {
+            graph,
+            init_config,
+            diagnostics: Vec::new(),
+        }
+    }
 }
 
 pub fn parse_mermaid(input: &str) -> Result<ParseOutput> {
     validate_init_directives(input)?;
+    let mut diagnostics: Vec<crate::error::ParseDiagnostic> = Vec::new();
     let Some(kind) = detect_diagram_kind(input) else {
+        // Try fuzzy detection on the first non-empty, non-comment line
+        let first_keyword = input
+            .lines()
+            .find(|line| {
+                let t = line.trim();
+                !t.is_empty() && !t.starts_with("---") && !t.starts_with("%%")
+            })
+            .map(|line| {
+                line.trim()
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .unwrap_or_default();
+        if !first_keyword.is_empty() {
+            if let Some(fuzzy) = fuzzy_detect_diagram_type(&first_keyword) {
+                if fuzzy.confidence > 0.7 {
+                    diagnostics.push(crate::error::ParseDiagnostic {
+                        severity: "warning".to_string(),
+                        message: format!(
+                            "Fuzzy matched \"{}\" → \"{}\" (confidence: {:.2})",
+                            fuzzy.original,
+                            fuzzy.detected,
+                            fuzzy.confidence
+                        ),
+                        line: 1,
+                        col: 1,
+                    });
+                    let mut output = match fuzzy.detected {
+                        DiagramKind::Class => parse_class_diagram(input)?,
+                        DiagramKind::State => parse_state_diagram(input)?,
+                        DiagramKind::Sequence => parse_sequence_diagram(input)?,
+                        DiagramKind::Er => parse_er_diagram(input)?,
+                        DiagramKind::Pie => parse_pie_diagram(input)?,
+                        DiagramKind::Mindmap => parse_mindmap_diagram(input)?,
+                        DiagramKind::Journey => parse_journey_diagram(input)?,
+                        DiagramKind::Timeline => parse_timeline_diagram(input)?,
+                        DiagramKind::Gantt => parse_gantt_diagram(input)?,
+                        DiagramKind::Requirement => parse_requirement_diagram(input)?,
+                        DiagramKind::GitGraph => parse_gitgraph_diagram(input)?,
+                        DiagramKind::C4 => parse_c4_diagram(input)?,
+                        DiagramKind::Sankey => parse_sankey_diagram(input)?,
+                        DiagramKind::Quadrant => parse_quadrant_diagram(input)?,
+                        DiagramKind::ZenUML => parse_zenuml_diagram(input)?,
+                        DiagramKind::Block => parse_block_diagram(input)?,
+                        DiagramKind::Packet => parse_packet_diagram(input)?,
+                        DiagramKind::Kanban => parse_kanban_diagram(input)?,
+                        DiagramKind::Architecture => parse_architecture_diagram(input)?,
+                        DiagramKind::Radar => parse_radar_diagram(input)?,
+                        DiagramKind::Treemap => parse_treemap_diagram(input)?,
+                        DiagramKind::XYChart => parse_xy_chart_diagram(input)?,
+                        DiagramKind::Flowchart => parse_flowchart(input)?,
+                    };
+                    output.diagnostics = diagnostics;
+                    return Ok(output);
+                }
+            }
+        }
         bail!("unknown or missing Mermaid diagram header");
     };
     match kind {
-        DiagramKind::Class => parse_class_diagram(input),
-        DiagramKind::State => parse_state_diagram(input),
-        DiagramKind::Sequence => parse_sequence_diagram(input),
-        DiagramKind::Er => parse_er_diagram(input),
-        DiagramKind::Pie => parse_pie_diagram(input),
-        DiagramKind::Mindmap => parse_mindmap_diagram(input),
-        DiagramKind::Journey => parse_journey_diagram(input),
-        DiagramKind::Timeline => parse_timeline_diagram(input),
-        DiagramKind::Gantt => parse_gantt_diagram(input),
-        DiagramKind::Requirement => parse_requirement_diagram(input),
-        DiagramKind::GitGraph => parse_gitgraph_diagram(input),
-        DiagramKind::C4 => parse_c4_diagram(input),
-        DiagramKind::Sankey => parse_sankey_diagram(input),
-        DiagramKind::Quadrant => parse_quadrant_diagram(input),
-        DiagramKind::ZenUML => parse_zenuml_diagram(input),
-        DiagramKind::Block => parse_block_diagram(input),
-        DiagramKind::Packet => parse_packet_diagram(input),
-        DiagramKind::Kanban => parse_kanban_diagram(input),
-        DiagramKind::Architecture => parse_architecture_diagram(input),
-        DiagramKind::Radar => parse_radar_diagram(input),
-        DiagramKind::Treemap => parse_treemap_diagram(input),
-        DiagramKind::XYChart => parse_xy_chart_diagram(input),
-        DiagramKind::Flowchart => parse_flowchart(input),
+        DiagramKind::Class => parse_class_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::State => parse_state_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::Sequence => parse_sequence_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::Er => parse_er_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::Pie => parse_pie_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::Mindmap => parse_mindmap_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::Journey => parse_journey_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::Timeline => parse_timeline_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::Gantt => parse_gantt_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::Requirement => parse_requirement_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::GitGraph => parse_gitgraph_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::C4 => parse_c4_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::Sankey => parse_sankey_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::Quadrant => parse_quadrant_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::ZenUML => parse_zenuml_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::Block => parse_block_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::Packet => parse_packet_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::Kanban => parse_kanban_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::Architecture => parse_architecture_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::Radar => parse_radar_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::Treemap => parse_treemap_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::XYChart => parse_xy_chart_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::Flowchart => parse_flowchart(input).map(|mut o| { o.diagnostics = diagnostics; o }),
     }
 }
 
@@ -104,6 +177,112 @@ fn validate_init_directives(input: &str) -> Result<()> {
         let _ = parse_init_directive(trimmed_line)?;
     }
     Ok(())
+}
+
+/// Compute Levenshtein distance between two strings.
+fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let _a_len = a.chars().count();
+    let b_len = b.chars().count();
+    let mut prev = (0..=b_len as isize).collect::<Vec<_>>();
+    let mut curr = vec![0isize; b_len + 1];
+    for (i, ca) in a.chars().enumerate() {
+        curr[0] = i as isize + 1;
+        for (j, cb) in b.chars().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            curr[j + 1] = std::cmp::min(
+                std::cmp::min(curr[j] + 1, prev[j + 1] + 1),
+                prev[j] + cost,
+            );
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b_len] as usize
+}
+
+/// Result of fuzzy diagram type detection.
+#[derive(Debug, Clone)]
+pub struct FuzzyDetection {
+    pub detected: DiagramKind,
+    pub original: String,
+    pub confidence: f32,
+    pub exact_match: bool,
+}
+
+/// Try fuzzy matching a diagram keyword with Levenshtein distance.
+/// Returns the best match if similarity > threshold.
+pub fn fuzzy_detect_diagram_type(keyword: &str) -> Option<FuzzyDetection> {
+    let known_keywords: Vec<(&str, DiagramKind)> = vec![
+        ("flowchart", DiagramKind::Flowchart),
+        ("flowchar", DiagramKind::Flowchart),
+        ("graph", DiagramKind::Flowchart),
+        ("sequenceDiagram", DiagramKind::Sequence),
+        ("classDiagram", DiagramKind::Class),
+        ("stateDiagram-v2", DiagramKind::State),
+        ("stateDiagram", DiagramKind::State),
+        ("erDiagram", DiagramKind::Er),
+        ("pie", DiagramKind::Pie),
+        ("mindmap", DiagramKind::Mindmap),
+        ("journey", DiagramKind::Journey),
+        ("timeline", DiagramKind::Timeline),
+        ("gantt", DiagramKind::Gantt),
+        ("requirementDiagram", DiagramKind::Requirement),
+        ("gitGraph", DiagramKind::GitGraph),
+        ("C4Context", DiagramKind::C4),
+        ("sankey-beta", DiagramKind::Sankey),
+        ("quadrantChart", DiagramKind::Quadrant),
+        ("zenuml", DiagramKind::ZenUML),
+        ("block-beta", DiagramKind::Block),
+        ("packet-beta", DiagramKind::Packet),
+        ("kanban", DiagramKind::Kanban),
+        ("architecture-beta", DiagramKind::Architecture),
+        ("radar", DiagramKind::Radar),
+        ("treemap", DiagramKind::Treemap),
+        ("xychart-beta", DiagramKind::XYChart),
+        ("xyChart", DiagramKind::XYChart),
+    ];
+
+    let keyword_lower = keyword.trim().to_ascii_lowercase();
+    if keyword_lower.is_empty() {
+        return None;
+    }
+
+    // Exact match check
+    for &(known, kind) in &known_keywords {
+        if known == keyword_lower {
+            return Some(FuzzyDetection {
+                detected: kind,
+                original: keyword.to_string(),
+                confidence: 1.0,
+                exact_match: true,
+            });
+        }
+    }
+
+    // Fuzzy match
+    let threshold = (keyword_lower.len() as f32 * 0.4).ceil() as usize;
+    let mut best: Option<(usize, DiagramKind, String)> = None;
+
+    for &(known, kind) in &known_keywords {
+        let dist = levenshtein_distance(&keyword_lower, &known.to_ascii_lowercase());
+        if dist <= threshold && dist < best.as_ref().map(|(d, _, _)| *d).unwrap_or(usize::MAX) {
+            best = Some((dist, kind, known.to_string()));
+        }
+    }
+
+    best.map(|(dist, kind, matched)| {
+        let denom = matched.len() as f32;
+        let confidence = if denom > 0.0 {
+            (1.0 - dist as f32 / denom).max(0.0)
+        } else {
+            0.0
+        };
+        FuzzyDetection {
+            detected: kind,
+            original: keyword.to_string(),
+            confidence,
+            exact_match: false,
+        }
+    })
 }
 
 fn detect_diagram_kind(input: &str) -> Option<DiagramKind> {
@@ -452,7 +631,7 @@ fn parse_flowchart(input: &str) -> Result<ParseOutput> {
         }
     }
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn add_flowchart_edge(line: &str, graph: &mut Graph, subgraph_stack: &[usize]) -> bool {
@@ -1454,7 +1633,7 @@ fn parse_class_diagram(input: &str) -> Result<ParseOutput> {
         node.label = lines.join("\n");
     }
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn is_er_card_char(ch: char) -> bool {
@@ -1708,7 +1887,7 @@ fn parse_er_diagram(input: &str) -> Result<ParseOutput> {
         node.label = lines.join("\n");
     }
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn parse_pie_diagram(input: &str) -> Result<ParseOutput> {
@@ -1754,7 +1933,7 @@ fn parse_pie_diagram(input: &str) -> Result<ParseOutput> {
         }
     }
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn parse_pie_slice_line(line: &str) -> Option<(String, f32)> {
@@ -1899,7 +2078,7 @@ fn parse_mindmap_diagram(input: &str) -> Result<ParseOutput> {
         stack.push(id);
     }
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn parse_mindmap_node_token(
@@ -2063,7 +2242,7 @@ fn parse_journey_diagram(input: &str) -> Result<ParseOutput> {
         }
     }
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn parse_journey_task_line(line: &str) -> Option<(String, Option<f32>, Vec<String>)> {
@@ -2190,7 +2369,7 @@ fn parse_timeline_diagram(input: &str) -> Result<ParseOutput> {
         &current_section,
     );
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn extract_frontmatter_value(input: &str, key: &str) -> Option<String> {
@@ -2347,7 +2526,7 @@ fn parse_gantt_diagram(input: &str) -> Result<ParseOutput> {
         }
     }
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn parse_gantt_task_meta(
@@ -2653,7 +2832,7 @@ fn parse_requirement_diagram(input: &str) -> Result<ParseOutput> {
         }
     }
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn parse_requirement_relation_line(line: &str) -> Option<(String, String, String)> {
@@ -2855,7 +3034,7 @@ fn parse_gitgraph_diagram(input: &str) -> Result<ParseOutput> {
         }
     }
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn parse_gitgraph_direction(line: &str) -> Option<Direction> {
@@ -3079,7 +3258,7 @@ fn parse_c4_diagram(input: &str) -> Result<ParseOutput> {
         process_c4_line(line, &mut graph.c4, &mut boundary_stack);
     }
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn process_c4_line(line: &str, c4: &mut crate::ir::C4Data, boundary_stack: &mut Vec<String>) {
@@ -3601,7 +3780,7 @@ fn parse_sankey_diagram(input: &str) -> Result<ParseOutput> {
         });
     }
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn parse_quadrant_diagram(input: &str) -> Result<ParseOutput> {
@@ -3675,7 +3854,7 @@ fn parse_quadrant_diagram(input: &str) -> Result<ParseOutput> {
         }
     }
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn parse_quadrant_point_coords(line: &str) -> Option<(String, f32, f32)> {
@@ -3738,7 +3917,7 @@ fn parse_zenuml_diagram(input: &str) -> Result<ParseOutput> {
 
     graph.sequence_participants = order;
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn parse_zenuml_message_line(
@@ -3953,7 +4132,7 @@ fn parse_block_diagram(input: &str) -> Result<ParseOutput> {
     // The layout stage infers an implicit grid from graph topology in that case.
     graph.block = Some(block);
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn parse_packet_diagram(input: &str) -> Result<ParseOutput> {
@@ -4010,7 +4189,7 @@ fn parse_packet_diagram(input: &str) -> Result<ParseOutput> {
         }
     }
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn parse_kanban_diagram(input: &str) -> Result<ParseOutput> {
@@ -4070,7 +4249,7 @@ fn parse_kanban_diagram(input: &str) -> Result<ParseOutput> {
         }
     }
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn parse_architecture_diagram(input: &str) -> Result<ParseOutput> {
@@ -4159,7 +4338,7 @@ fn parse_architecture_diagram(input: &str) -> Result<ParseOutput> {
         }
     }
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 #[derive(Debug, Clone)]
@@ -4341,7 +4520,7 @@ fn parse_radar_diagram(input: &str) -> Result<ParseOutput> {
         }
     }
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn parse_radar_curve(line: &str) -> Option<(String, Vec<String>)> {
@@ -4433,7 +4612,7 @@ fn parse_treemap_diagram(input: &str) -> Result<ParseOutput> {
         stack.push(node_id);
     }
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn parse_treemap_item(line: &str) -> (String, Option<String>) {
@@ -4533,7 +4712,7 @@ fn parse_xy_chart_diagram(input: &str) -> Result<ParseOutput> {
         }
     }
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn parse_xy_series_line_v2(
@@ -4977,7 +5156,7 @@ fn parse_state_diagram(input: &str) -> Result<ParseOutput> {
         }
     }
 
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn parse_sequence_diagram(input: &str) -> Result<ParseOutput> {
@@ -5279,7 +5458,7 @@ fn parse_sequence_diagram(input: &str) -> Result<ParseOutput> {
 
     graph.sequence_participants = order;
     graph.sequence_frames = frames;
-    Ok(ParseOutput { graph, init_config })
+    Ok(ParseOutput::new(graph, init_config))
 }
 
 fn add_node_to_subgraph(graph: &mut Graph, idx: usize, node_id: &str) {
