@@ -1055,8 +1055,8 @@ impl RenderScene {
                     fill: None,
                 });
                 // Edge label
-                if let Some(label) = &edge.label {
-                    if let Some(anchor) = edge.label_anchor {
+                if let Some(label) = &edge.label
+                    && let Some(anchor) = edge.label_anchor {
                         edge_group.items.push(RenderItem::Text {
                             x: anchor.0,
                             y: anchor.1 + label.height / 4.0,
@@ -1067,7 +1067,6 @@ impl RenderScene {
                             anchor: TextAnchor::Middle,
                         });
                     }
-                }
             }
         }
         scene.groups.push(edge_group);

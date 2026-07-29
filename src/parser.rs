@@ -80,16 +80,15 @@ pub fn parse_mermaid(input: &str) -> Result<ParseOutput> {
                 !t.is_empty() && !t.starts_with("---") && !t.starts_with("%%")
             })
             .map(|line| {
-                line.trim()
-                    .split_whitespace()
+                line.split_whitespace()
                     .next()
                     .unwrap_or("")
                     .to_string()
             })
             .unwrap_or_default();
-        if !first_keyword.is_empty() {
-            if let Some(fuzzy) = fuzzy_detect_diagram_type(&first_keyword) {
-                if fuzzy.confidence > 0.7 {
+        if !first_keyword.is_empty()
+            && let Some(fuzzy) = fuzzy_detect_diagram_type(&first_keyword)
+                && fuzzy.confidence > 0.7 {
                     diagnostics.push(crate::error::ParseDiagnostic {
                         severity: "warning".to_string(),
                         message: format!(
@@ -129,8 +128,6 @@ pub fn parse_mermaid(input: &str) -> Result<ParseOutput> {
                     output.diagnostics = diagnostics;
                     return Ok(output);
                 }
-            }
-        }
         bail!("unknown or missing Mermaid diagram header");
     };
     match kind {
