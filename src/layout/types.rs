@@ -1,6 +1,157 @@
 use std::collections::BTreeMap;
 
 use crate::ir::Direction;
+use serde::{Deserialize, Serialize};
+
+/// A unique trace identifier for a single diagram render pipeline invocation.
+///
+/// Generated once per `compute_layout` call and threaded through every phase
+/// so that decision records can be correlated back to a specific render run.
+///
+/// This mirrors the `franken_kernel::TraceId` pattern from frankenmermaid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TraceId(pub u128);
+
+impl TraceId {
+    /// Create a new random trace id (based on monotonic counter and process seed).
+    pub fn new() -> Self {
+        use std::sync::atomic::AtomicU64;
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let pid = std::process::id() as u128;
+        let time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed) as u128;
+        Self(pid.wrapping_mul(3).wrapping_add(time).wrapping_mul(7).wrapping_add(seq))
+    }
+}
+
+impl Default for TraceId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for TraceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:032x}", self.0)
+    }
+}
+
+/// A render-agnostic scene description built from Layout.
+/// Intermediate representation between layout computation and
+/// any render backend (SVG, terminal, canvas).
+#[derive(Debug, Clone, Default)]
+pub struct RenderScene {
+    pub width: f32,
+    pub height: f32,
+    pub groups: Vec<RenderGroup>,
+}
+
+/// A named group of render items (e.g. a subgraph, a node cluster).
+#[derive(Debug, Clone)]
+pub struct RenderGroup {
+    pub label: Option<String>,
+    pub items: Vec<RenderItem>,
+}
+
+/// A single renderable primitive in the scene.
+#[derive(Debug, Clone)]
+pub enum RenderItem {
+    Rect {
+        x: f32, y: f32, w: f32, h: f32,
+        rx: Option<f32>,
+        fill: Option<String>,
+        stroke: Option<String>,
+        stroke_width: f32,
+    },
+    Circle {
+        cx: f32, cy: f32, r: f32,
+        fill: Option<String>,
+        stroke: Option<String>,
+        stroke_width: f32,
+    },
+    Line {
+        x1: f32, y1: f32, x2: f32, y2: f32,
+        stroke: Option<String>,
+        stroke_width: f32,
+    },
+    Polyline {
+        points: Vec<(f32, f32)>,
+        stroke: Option<String>,
+        stroke_width: f32,
+        fill: Option<String>,
+    },
+    Text {
+        x: f32, y: f32,
+        text: String,
+        font_size: f32,
+        font_family: Option<String>,
+        fill: Option<String>,
+        anchor: TextAnchor,
+    },
+    Path {
+        d: String,
+        fill: Option<String>,
+        stroke: Option<String>,
+        stroke_width: f32,
+    },
+}
+
+/// Text anchor horizontal alignment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextAnchor {
+    Start,
+    Middle,
+    End,
+}
+
+/// A single decision record captured during layout computation.
+///
+/// Each decision records what was decided, why, and the measurable outcome.
+/// This is a simplified version of frankenmermaid's `MermaidLayoutDecisionRecord`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecisionEntry {
+    /// The pipeline phase this decision belongs to (e.g. "rank_assignment", "crossing_minimization", "finalize").
+    pub phase: String,
+    /// Human-readable description of what was decided.
+    pub what: String,
+    /// Why this decision was made (e.g. "selected Sugiyama algorithm for Flowchart diagram type").
+    pub rationale: String,
+    /// Optional numeric outcome for regression analysis (e.g. crossing count, edge length sum).
+    pub metric: Option<f64>,
+}
+
+/// Decision ledger that accumulates layout decisions across the pipeline.
+///
+/// Threaded through `compute_layout` so each phase can record its choices.
+/// The full ledger is available in `RenderDetailedResult` and can be dumped
+/// as JSON via the `--decisions` CLI flag.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DecisionLedger {
+    /// Unique trace identifier for this pipeline run.
+    pub trace_id: TraceId,
+    /// Decisions recorded in order of execution.
+    pub entries: Vec<DecisionEntry>,
+}
+
+impl DecisionLedger {
+    /// Record a decision entry.
+    pub fn record(&mut self, phase: &str, what: &str, rationale: &str, metric: Option<f64>) {
+        self.entries.push(DecisionEntry {
+            phase: phase.to_string(),
+            what: what.to_string(),
+            rationale: rationale.to_string(),
+            metric,
+        });
+    }
+
+    /// Convenience: record a numeric metric without extensive rationale.
+    pub fn metric(&mut self, phase: &str, name: &str, value: f64) {
+        self.record(phase, name, "", Some(value));
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct TextBlock {
@@ -622,3 +773,304 @@ pub struct GanttTick {
     pub x: f32,
     pub label: String,
 }
+
+/// Layout algorithm strategy, auto-selected by diagram type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum LayoutAlgorithm {
+    /// Sugiyama layered layout (flowcharts, class, state, ER)
+    #[default]
+    Sugiyama,
+    /// Force-directed placement (simple graphs, mindmaps)
+    ForceDirected,
+    /// Tree layout (mindmap, timeline)
+    Tree,
+    /// Radial layout around a center
+    Radial,
+    /// Sequence diagram layout (top-to-bottom lifelines)
+    Sequence,
+    /// Pie chart layout (circular)
+    Pie,
+    /// Sankey diagram layout (flow magnitude)
+    Sankey,
+    /// Grid layout (block, kanban)
+    Grid,
+    /// Gantt chart timeline layout
+    Gantt,
+    /// Git graph layout (branch topology)
+    GitGraph,
+    /// Quadrant chart layout
+    Quadrant,
+    /// XY chart layout (cartesian)
+    XYChart,
+    /// Journey map layout
+    Journey,
+    /// C4 architecture layout
+    C4,
+    /// Error fallback layout
+    Error,
+}
+
+impl LayoutAlgorithm {
+    pub fn auto_select(kind: &crate::ir::DiagramKind) -> Self {
+        match kind {
+            crate::ir::DiagramKind::Flowchart
+            | crate::ir::DiagramKind::Class
+            | crate::ir::DiagramKind::State
+            | crate::ir::DiagramKind::Er
+            | crate::ir::DiagramKind::Requirement
+            | crate::ir::DiagramKind::Packet => Self::Sugiyama,
+            crate::ir::DiagramKind::Sequence | crate::ir::DiagramKind::ZenUML => Self::Sequence,
+            crate::ir::DiagramKind::Pie => Self::Pie,
+            crate::ir::DiagramKind::Mindmap => Self::Tree,
+            crate::ir::DiagramKind::Journey => Self::Journey,
+            crate::ir::DiagramKind::Timeline => Self::Tree,
+            crate::ir::DiagramKind::Gantt => Self::Gantt,
+            crate::ir::DiagramKind::GitGraph => Self::GitGraph,
+            crate::ir::DiagramKind::C4 => Self::C4,
+            crate::ir::DiagramKind::Sankey => Self::Sankey,
+            crate::ir::DiagramKind::Quadrant => Self::Quadrant,
+            crate::ir::DiagramKind::Block => Self::Grid,
+            crate::ir::DiagramKind::Kanban => Self::Grid,
+            crate::ir::DiagramKind::Architecture => Self::Grid,
+            crate::ir::DiagramKind::Radar => Self::Pie,
+            crate::ir::DiagramKind::Treemap => Self::Grid,
+            crate::ir::DiagramKind::XYChart => Self::XYChart,
+        }
+    }
+
+    /// Parse a CLI/config algorithm name (`auto` returns `None`).
+    pub fn parse_name(raw: &str) -> Result<Option<Self>, String> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "" | "auto" => Ok(None),
+            "sugiyama" => Ok(Some(Self::Sugiyama)),
+            "force" | "force-directed" | "forcedirected" => Ok(Some(Self::ForceDirected)),
+            "tree" => Ok(Some(Self::Tree)),
+            "radial" => Ok(Some(Self::Radial)),
+            "sequence" => Ok(Some(Self::Sequence)),
+            "pie" => Ok(Some(Self::Pie)),
+            "sankey" => Ok(Some(Self::Sankey)),
+            "grid" => Ok(Some(Self::Grid)),
+            "gantt" => Ok(Some(Self::Gantt)),
+            "gitgraph" | "git-graph" => Ok(Some(Self::GitGraph)),
+            "quadrant" => Ok(Some(Self::Quadrant)),
+            "xychart" | "xy-chart" => Ok(Some(Self::XYChart)),
+            "journey" => Ok(Some(Self::Journey)),
+            "c4" => Ok(Some(Self::C4)),
+            "error" => Ok(Some(Self::Error)),
+            other => Err(format!("unknown layout algorithm '{other}'")),
+        }
+    }
+}
+
+impl std::fmt::Display for LayoutAlgorithm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::Sugiyama => "sugiyama",
+            Self::ForceDirected => "force-directed",
+            Self::Tree => "tree",
+            Self::Radial => "radial",
+            Self::Sequence => "sequence",
+            Self::Pie => "pie",
+            Self::Sankey => "sankey",
+            Self::Grid => "grid",
+            Self::Gantt => "gantt",
+            Self::GitGraph => "git-graph",
+            Self::Quadrant => "quadrant",
+            Self::XYChart => "xychart",
+            Self::Journey => "journey",
+            Self::C4 => "c4",
+            Self::Error => "error",
+        };
+        f.write_str(name)
+    }
+}
+
+/// Cycle-breaking strategy for directed graphs with cycles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CycleStrategy {
+    /// Greedy feedback arc set (fast, reasonable quality)
+    #[default]
+    Greedy,
+    /// DFS back-edge detection
+    DfsBackEdge,
+    /// Minimum feedback arc set approximation
+    Mfas,
+    /// Full SCC-aware cycle detection with cluster collapse
+    CycleAwareScc,
+}
+
+impl CycleStrategy {
+    /// Parse a CLI/config cycle-strategy name.
+    pub fn parse_name(raw: &str) -> Result<Self, String> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "greedy" => Ok(Self::Greedy),
+            "dfs" | "dfs-back-edge" | "dfsbackedge" => Ok(Self::DfsBackEdge),
+            "mfas" => Ok(Self::Mfas),
+            "scc" | "cycle-aware-scc" | "cycleawarescc" => Ok(Self::CycleAwareScc),
+            other => Err(format!("unknown cycle strategy '{other}'")),
+        }
+    }
+}
+
+impl std::fmt::Display for CycleStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::Greedy => "greedy",
+            Self::DfsBackEdge => "dfs-back-edge",
+            Self::Mfas => "mfas",
+            Self::CycleAwareScc => "cycle-aware-scc",
+        };
+        f.write_str(name)
+    }
+}
+
+impl RenderScene {
+    /// Build a RenderScene from a completed Layout.
+    pub fn from_layout(layout: &Layout, theme: &crate::theme::Theme, _config: &crate::config::LayoutConfig) -> Self {
+        let mut scene = RenderScene {
+            width: layout.width,
+            height: layout.height,
+            groups: Vec::new(),
+        };
+
+        // Subgraph backgrounds (drawn first)
+        for sg in &layout.subgraphs {
+            let mut group = RenderGroup {
+                label: Some(sg.label.clone()),
+                items: Vec::new(),
+            };
+            group.items.push(RenderItem::Rect {
+                x: sg.x, y: sg.y, w: sg.width, h: sg.height,
+                rx: Some(8.0),
+                fill: Some(sg.style.fill.clone().unwrap_or_else(|| "#ffffff".to_string())),
+                stroke: Some(sg.style.stroke.clone().unwrap_or_else(|| "#cccccc".to_string())),
+                stroke_width: sg.style.stroke_width.unwrap_or(1.0),
+            });
+            // Subgraph label
+            group.items.push(RenderItem::Text {
+                x: sg.x + 10.0,
+                y: sg.y + sg.label_block.height + 4.0,
+                text: sg.label_block.lines.join(" "),
+                font_size: 14.0,
+                font_family: None,
+                fill: Some(theme.text_color.clone()),
+                anchor: TextAnchor::Start,
+            });
+            scene.groups.push(group);
+        }
+
+        // Nodes
+        let mut node_group = RenderGroup { label: Some("nodes".to_string()), items: Vec::new() };
+        for node in layout.nodes.values() {
+            if node.hidden { continue; }
+            let rx = match node.shape {
+                crate::ir::NodeShape::RoundRect | crate::ir::NodeShape::Stadium => Some(6.0),
+                crate::ir::NodeShape::Diamond => None,
+                _ => None,
+            };
+            node_group.items.push(RenderItem::Rect {
+                x: node.x, y: node.y, w: node.width, h: node.height,
+                rx,
+                fill: Some(node.style.fill.clone().unwrap_or_else(|| theme.primary_color.clone())),
+                stroke: Some(node.style.stroke.clone().unwrap_or_else(|| theme.primary_border_color.clone())),
+                stroke_width: node.style.stroke_width.unwrap_or(2.0),
+            });
+            node_group.items.push(RenderItem::Text {
+                x: node.x + node.width / 2.0,
+                y: node.y + node.height / 2.0 + node.label.height / 4.0,
+                text: node.label.lines.join(" "),
+                font_size: 14.0,
+                font_family: None,
+                fill: Some(node.style.text_color.clone().unwrap_or_else(|| theme.primary_text_color.clone())),
+                anchor: TextAnchor::Middle,
+            });
+        }
+        scene.groups.push(node_group);
+
+        // Edges
+        let mut edge_group = RenderGroup { label: Some("edges".to_string()), items: Vec::new() };
+        for edge in &layout.edges {
+            if edge.points.len() >= 2 {
+                edge_group.items.push(RenderItem::Polyline {
+                    points: edge.points.clone(),
+                    stroke: Some(theme.line_color.clone()),
+                    stroke_width: 2.0,
+                    fill: None,
+                });
+                // Edge label
+                if let Some(label) = &edge.label {
+                    if let Some(anchor) = edge.label_anchor {
+                        edge_group.items.push(RenderItem::Text {
+                            x: anchor.0,
+                            y: anchor.1 + label.height / 4.0,
+                            text: label.lines.join(" "),
+                            font_size: 12.0,
+                            font_family: None,
+                            fill: Some(theme.text_color.clone()),
+                            anchor: TextAnchor::Middle,
+                        });
+                    }
+                }
+            }
+        }
+        scene.groups.push(edge_group);
+
+        scene
+    }
+}
+
+#[cfg(test)]
+mod pattern_tests {
+    use super::*;
+    use crate::ir::DiagramKind;
+
+    #[test]
+    fn layout_algorithm_auto_selects_flowchart_sugiyama() {
+        assert_eq!(
+            LayoutAlgorithm::auto_select(&DiagramKind::Flowchart),
+            LayoutAlgorithm::Sugiyama
+        );
+        assert_eq!(
+            LayoutAlgorithm::auto_select(&DiagramKind::Sequence),
+            LayoutAlgorithm::Sequence
+        );
+    }
+
+    #[test]
+    fn layout_algorithm_parse_name_accepts_auto_and_aliases() {
+        assert_eq!(LayoutAlgorithm::parse_name("auto").unwrap(), None);
+        assert_eq!(
+            LayoutAlgorithm::parse_name("sugiyama").unwrap(),
+            Some(LayoutAlgorithm::Sugiyama)
+        );
+        assert_eq!(
+            LayoutAlgorithm::parse_name("force-directed").unwrap(),
+            Some(LayoutAlgorithm::ForceDirected)
+        );
+        assert!(LayoutAlgorithm::parse_name("nope").is_err());
+    }
+
+    #[test]
+    fn cycle_strategy_display_and_parse_roundtrip() {
+        for strategy in [
+            CycleStrategy::Greedy,
+            CycleStrategy::DfsBackEdge,
+            CycleStrategy::Mfas,
+            CycleStrategy::CycleAwareScc,
+        ] {
+            let parsed = CycleStrategy::parse_name(&strategy.to_string()).unwrap();
+            assert_eq!(parsed, strategy);
+        }
+    }
+
+    #[test]
+    fn decision_ledger_records_entries_with_trace_id() {
+        let mut ledger = DecisionLedger::default();
+        ledger.record("dispatch", "diagram_type=flowchart", "test", None);
+        ledger.metric("finalize", "nodes", 3.0);
+        assert!(!ledger.trace_id.to_string().is_empty());
+        assert_eq!(ledger.entries.len(), 2);
+        assert_eq!(ledger.entries[1].metric, Some(3.0));
+    }
+}
+

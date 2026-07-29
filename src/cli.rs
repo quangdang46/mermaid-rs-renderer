@@ -1,13 +1,15 @@
 use crate::config::{Config, load_config_with_theme};
-use crate::layout::compute_layout_with_metrics;
+use crate::layout::{CycleStrategy, LayoutAlgorithm, compute_layout_with_metrics};
+use crate::layout::validate_layout_invariants;
 use crate::layout_dump::write_layout_dump;
 use crate::parser::parse_mermaid;
 #[cfg(feature = "png")]
 use crate::render::write_output_png;
 use crate::render::{measure_svg_dimensions, render_svg_with_dimensions, write_output_svg};
+use crate::term::render_term_layout;
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
@@ -73,12 +75,38 @@ pub struct Args {
     /// Use fast text metrics (approximate widths) for speed
     #[arg(long = "fastText")]
     pub fast_text_metrics: bool,
+
+    /// Validate layout invariants after computation and exit with errors if violations found
+    #[arg(long = "checkInvariants")]
+    pub check_invariants: bool,
+
+    /// Output the decision ledger as JSON (includes trace-id and per-phase records)
+    #[arg(long = "decisions")]
+    pub decisions: bool,
+
+    /// Layout algorithm (`auto`, `sugiyama`, `force`, `tree`, …). Default: auto-select by diagram type.
+    #[arg(long = "layoutAlgorithm", value_parser = parse_layout_algorithm_arg)]
+    pub layout_algorithm: Option<Option<LayoutAlgorithm>>,
+
+    /// Cycle-breaking strategy (`greedy`, `dfs`, `mfas`, `scc`)
+    #[arg(long = "cycleStrategy", value_parser = parse_cycle_strategy_arg)]
+    pub cycle_strategy: Option<CycleStrategy>,
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy)]
 pub enum OutputFormat {
     Svg,
     Png,
+    /// Unicode box-drawing terminal output (via RenderScene)
+    Term,
+}
+
+fn parse_layout_algorithm_arg(raw: &str) -> Result<Option<LayoutAlgorithm>, String> {
+    LayoutAlgorithm::parse_name(raw)
+}
+
+fn parse_cycle_strategy_arg(raw: &str) -> Result<CycleStrategy, String> {
+    CycleStrategy::parse_name(raw)
 }
 
 fn parse_aspect_ratio_value(raw: &str) -> Result<f32, String> {
@@ -167,6 +195,12 @@ pub fn run() -> Result<()> {
     if args.fast_text_metrics {
         base_config.layout.fast_text_metrics = true;
     }
+    if let Some(algo) = args.layout_algorithm {
+        base_config.layout.layout_algorithm = algo;
+    }
+    if let Some(strategy) = args.cycle_strategy {
+        base_config.layout.cycle_strategy = strategy;
+    }
 
     let (input, is_markdown) = read_input(args.input.as_deref())?;
     let diagrams = if is_markdown {
@@ -189,7 +223,7 @@ pub fn run() -> Result<()> {
     };
 
     if diagrams.len() == 1 {
-        let t_parse_start = std::time::Instant::now();
+        let t_parse_start = web_time::Instant::now();
         let parsed = parse_mermaid(&diagrams[0])?;
         let parse_us = t_parse_start.elapsed().as_micros();
 
@@ -198,10 +232,18 @@ pub fn run() -> Result<()> {
             config = merge_init_config(config, init_cfg);
         }
 
-        let t_layout_start = std::time::Instant::now();
-        let (layout, layout_stages) =
+        let t_layout_start = web_time::Instant::now();
+        let (layout, layout_stages, ledger) =
             compute_layout_with_metrics(&parsed.graph, &config.theme, &config.layout);
         let layout_us = t_layout_start.elapsed().as_micros();
+
+        if args.check_invariants {
+            report_invariant_errors(&layout)?;
+        }
+
+        if args.decisions {
+            eprintln!("{}", serde_json::to_string_pretty(&ledger)?);
+        }
 
         if let Some(outputs) = layout_outputs.as_ref()
             && let Some(path) = outputs.first()
@@ -215,19 +257,29 @@ pub fn run() -> Result<()> {
             return Ok(());
         }
 
-        let t_render_start = std::time::Instant::now();
-        let svg =
-            render_svg_with_dimensions(&layout, &config.theme, &config.layout, explicit_dimensions);
-        let render_us = t_render_start.elapsed().as_micros();
-
-        match args.output_format {
+        let t_render_start = web_time::Instant::now();
+        let render_us = match args.output_format {
             OutputFormat::Svg => {
+                let svg = render_svg_with_dimensions(
+                    &layout,
+                    &config.theme,
+                    &config.layout,
+                    explicit_dimensions,
+                );
                 write_output_svg(&svg, args.output.as_deref())?;
+                t_render_start.elapsed().as_micros()
             }
             #[cfg(feature = "png")]
             OutputFormat::Png => {
+                let svg = render_svg_with_dimensions(
+                    &layout,
+                    &config.theme,
+                    &config.layout,
+                    explicit_dimensions,
+                );
                 let output = ensure_output(&args.output, "png")?;
                 write_output_png(&svg, &output, &config.render, &config.theme)?;
+                t_render_start.elapsed().as_micros()
             }
             #[cfg(not(feature = "png"))]
             OutputFormat::Png => {
@@ -235,7 +287,12 @@ pub fn run() -> Result<()> {
                     "PNG output requires the 'png' feature. Rebuild with: cargo build --features png"
                 ));
             }
-        }
+            OutputFormat::Term => {
+                let term = render_term_layout(&layout, &config.theme);
+                write_output_text(&term, args.output.as_deref())?;
+                t_render_start.elapsed().as_micros()
+            }
+        };
 
         if args.timing {
             let total_us = parse_us + layout_us + render_us;
@@ -265,7 +322,7 @@ pub fn run() -> Result<()> {
             if let Some(init_cfg) = parsed.init_config.clone() {
                 config = merge_init_config(config, init_cfg);
             }
-            let (layout, _) =
+            let (layout, _, _) =
                 compute_layout_with_metrics(&parsed.graph, &config.theme, &config.layout);
             let dimensions = measure_svg_dimensions(&layout, &config.layout, explicit_dimensions);
             sizes.push(serde_json::json!({
@@ -279,27 +336,47 @@ pub fn run() -> Result<()> {
 
     let outputs =
         resolve_multi_outputs(args.output.as_deref(), args.output_format, diagrams.len())?;
+    let mut multi_ledgers = Vec::new();
     for (idx, diagram) in diagrams.iter().enumerate() {
         let parsed = parse_mermaid(diagram)?;
         let mut config = base_config.clone();
         if let Some(init_cfg) = parsed.init_config.clone() {
             config = merge_init_config(config, init_cfg);
         }
-        let (layout, _layout_stages) =
+        let (layout, _, ledger) =
             compute_layout_with_metrics(&parsed.graph, &config.theme, &config.layout);
+        if args.check_invariants {
+            report_invariant_errors(&layout)?;
+        }
+        if args.decisions {
+            multi_ledgers.push(serde_json::json!({
+                "index": idx,
+                "ledger": ledger,
+            }));
+        }
         if let Some(outputs) = layout_outputs.as_ref()
             && let Some(path) = outputs.get(idx)
         {
             write_layout_dump(path, &layout, &parsed.graph)?;
         }
-        let svg =
-            render_svg_with_dimensions(&layout, &config.theme, &config.layout, explicit_dimensions);
         match args.output_format {
             OutputFormat::Svg => {
+                let svg = render_svg_with_dimensions(
+                    &layout,
+                    &config.theme,
+                    &config.layout,
+                    explicit_dimensions,
+                );
                 write_output_svg(&svg, Some(&outputs[idx]))?;
             }
             #[cfg(feature = "png")]
             OutputFormat::Png => {
+                let svg = render_svg_with_dimensions(
+                    &layout,
+                    &config.theme,
+                    &config.layout,
+                    explicit_dimensions,
+                );
                 write_output_png(&svg, &outputs[idx], &config.render, &config.theme)?;
             }
             #[cfg(not(feature = "png"))]
@@ -308,9 +385,45 @@ pub fn run() -> Result<()> {
                     "PNG output requires the 'png' feature. Rebuild with: cargo build --features png"
                 ));
             }
+            OutputFormat::Term => {
+                let term = render_term_layout(&layout, &config.theme);
+                write_output_text(&term, Some(&outputs[idx]))?;
+            }
         }
     }
 
+    if args.decisions {
+        eprintln!("{}", serde_json::to_string_pretty(&multi_ledgers)?);
+    }
+
+    Ok(())
+}
+
+fn report_invariant_errors(layout: &crate::layout::Layout) -> Result<()> {
+    let inv_result = validate_layout_invariants(layout);
+    if let Err(errors) = inv_result {
+        eprintln!("Layout invariant violations:");
+        for error in &errors {
+            eprintln!("  {}: {}", error.path, error.message);
+        }
+        return Err(anyhow::anyhow!(
+            "{} layout invariant violation(s) detected",
+            errors.len()
+        ));
+    }
+    Ok(())
+}
+
+fn write_output_text(text: &str, output: Option<&Path>) -> Result<()> {
+    match output {
+        Some(path) => {
+            std::fs::write(path, text)?;
+        }
+        None => {
+            let mut stdout = io::stdout();
+            stdout.write_all(text.as_bytes())?;
+        }
+    }
     Ok(())
 }
 
@@ -412,6 +525,7 @@ fn resolve_multi_outputs(
     let ext = match format {
         OutputFormat::Svg => "svg",
         OutputFormat::Png => "png",
+        OutputFormat::Term => "txt",
     };
     let base = output.ok_or_else(|| anyhow::anyhow!("Output path required for markdown input"))?;
     if base.is_dir() {

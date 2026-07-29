@@ -14,6 +14,7 @@
 //! See `docs/error_tracking.md` for the line/column conventions
 //! detection paths follow.
 
+use serde::Serialize;
 use thiserror::Error;
 
 /// Typed parse errors surfaced by [`parse_mermaid_strict`]
@@ -121,6 +122,29 @@ pub enum RenderError {
     /// A resource cap was breached (source bytes, output size, …).
     #[error("mermaid resource limit: {0}")]
     ResourceLimit(String),
+}
+
+/// A non-fatal diagnostic message produced during parsing.
+#[derive(Debug, Clone, Serialize)]
+pub struct ParseDiagnostic {
+    /// Severity level: "warning" or "info".
+    pub severity: String,
+    /// Human-readable message text.
+    pub message: String,
+    /// 1-based line number.
+    pub line: usize,
+    /// 1-based column number.
+    pub col: usize,
+}
+
+/// Extended parse output that includes non-fatal diagnostics alongside the
+/// parsed diagram data.
+#[derive(Debug, Clone)]
+pub struct ParseOutputWithDiagnostics {
+    /// The underlying parse output containing the parsed graph and config.
+    pub output: crate::parser::ParseOutput,
+    /// Non-fatal diagnostics accumulated during parsing.
+    pub diagnostics: Vec<ParseDiagnostic>,
 }
 
 /// Bridge [`ParseError`] into [`anyhow::Error`] so the legacy

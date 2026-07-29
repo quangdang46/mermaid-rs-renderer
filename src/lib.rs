@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #![allow(clippy::field_reassign_with_default)]
 #![allow(clippy::manual_strip)]
 #![allow(clippy::needless_range_loop)]
@@ -100,6 +101,7 @@ pub mod parser;
 #[cfg(feature = "png")]
 pub mod png;
 pub mod render;
+pub mod term;
 mod text_metrics;
 pub mod theme;
 pub(crate) mod unicode_width;
@@ -107,17 +109,19 @@ pub mod validator;
 
 // Re-export commonly used types at crate root for ergonomic library usage
 pub use config::{Config, LayoutConfig, RenderConfig};
-pub use error::{ParseError, RenderError};
+pub use error::{ParseDiagnostic, ParseError, ParseOutputWithDiagnostics, RenderError};
 pub use ir::{
     DiagramKind, Direction, Edge, EdgeArrowhead, EdgeDecoration, EdgeStyle, Graph, Node, NodeLink,
     NodeShape, SequenceActivation, SequenceActivationKind, SequenceBox, StateNote,
     StateNotePosition, Subgraph,
 };
 pub use layout::{
-    EdgeLayout, Layout, LayoutStageMetrics, NodeLayout, SubgraphLayout, compute_layout,
-    compute_layout_with_metrics,
+    compute_layout, compute_layout_with_ledger, compute_layout_with_metrics,
+    DecisionLedger, DecisionEntry, EdgeLayout, Layout, LayoutStageMetrics, NodeLayout,
+    SubgraphLayout, TraceId, LayoutAlgorithm, CycleStrategy, validate_layout_invariants,
+    LayoutInvariantError, RenderScene, RenderGroup, RenderItem, TextAnchor,
 };
-pub use parser::{ParseOutput, parse_mermaid};
+pub use parser::{FuzzyDetection, ParseOutput, fuzzy_detect_diagram_type, parse_mermaid};
 #[cfg(feature = "png")]
 pub use png::{
     DEFAULT_MAX_SOURCE_BYTES, FACE_DARK_SURFACE, FACE_LIGHT_SURFACE, MAX_OUTPUT_DIMENSION,
@@ -127,7 +131,8 @@ pub use png::{
 };
 #[cfg(feature = "png")]
 pub use render::write_output_png;
-pub use render::{SvgDimensions, measure_svg_dimensions, render_svg, write_output_svg};
+pub use render::{SvgDimensions, measure_svg_dimensions, render_svg, scene_to_svg, render_svg_via_scene, write_output_svg};
+pub use term::{render_term, render_term_layout, render_term_scene};
 pub use theme::Theme;
 
 /// Options for the high-level `render` function.
@@ -324,6 +329,8 @@ pub struct RenderDetailedResult {
     pub render_us: u128,
     /// Fine-grained layout stage timings (microseconds).
     pub layout_stages: LayoutStageMetrics,
+    /// Decision ledger recording every layout-phase decision.
+    pub decision_ledger: layout::DecisionLedger,
 }
 
 impl RenderDetailedResult {
@@ -371,14 +378,14 @@ pub fn render_with_detailed_timing(
     input: &str,
     options: RenderOptions,
 ) -> anyhow::Result<RenderDetailedResult> {
-    use std::time::Instant;
+    use web_time::Instant;
 
     let t0 = Instant::now();
     let parsed = parse_mermaid(input)?;
     let parse_us = t0.elapsed().as_micros();
 
     let t1 = Instant::now();
-    let (layout, layout_stages) =
+    let (layout, layout_stages, decision_ledger) =
         compute_layout_with_metrics(&parsed.graph, &options.theme, &options.layout);
     let layout_us = t1.elapsed().as_micros();
 
@@ -392,6 +399,7 @@ pub fn render_with_detailed_timing(
         layout_us,
         render_us,
         layout_stages,
+        decision_ledger,
     })
 }
 
