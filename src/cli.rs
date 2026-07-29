@@ -84,9 +84,9 @@ pub struct Args {
     #[arg(long = "decisions")]
     pub decisions: bool,
 
-    /// Layout algorithm (`auto`, `sugiyama`, `force`, `tree`, …). Default: auto-select by diagram type.
+    /// Layout algorithm (`sugiyama`, `force`, `tree`, …). Omit for auto-select by diagram type.
     #[arg(long = "layoutAlgorithm", value_parser = parse_layout_algorithm_arg)]
-    pub layout_algorithm: Option<Option<LayoutAlgorithm>>,
+    pub layout_algorithm: Option<LayoutAlgorithm>,
 
     /// Cycle-breaking strategy (`greedy`, `dfs`, `mfas`, `scc`)
     #[arg(long = "cycleStrategy", value_parser = parse_cycle_strategy_arg)]
@@ -101,8 +101,12 @@ pub enum OutputFormat {
     Term,
 }
 
-fn parse_layout_algorithm_arg(raw: &str) -> Result<Option<LayoutAlgorithm>, String> {
-    LayoutAlgorithm::parse_name(raw)
+fn parse_layout_algorithm_arg(raw: &str) -> Result<LayoutAlgorithm, String> {
+    match LayoutAlgorithm::parse_name(raw) {
+        Ok(Some(algo)) => Ok(algo),
+        Ok(None) => Err("omit the flag to auto-select layout algorithm".to_string()),
+        Err(e) => Err(e),
+    }
 }
 
 fn parse_cycle_strategy_arg(raw: &str) -> Result<CycleStrategy, String> {
@@ -196,7 +200,7 @@ pub fn run() -> Result<()> {
         base_config.layout.fast_text_metrics = true;
     }
     if let Some(algo) = args.layout_algorithm {
-        base_config.layout.layout_algorithm = algo;
+        base_config.layout.layout_algorithm = Some(algo);
     }
     if let Some(strategy) = args.cycle_strategy {
         base_config.layout.cycle_strategy = strategy;
