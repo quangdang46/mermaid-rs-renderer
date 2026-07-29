@@ -1,12 +1,12 @@
 [package]
 name = "mermaid-rs-renderer"
-version = "0.3.2"
+version = "0.1.0"
 edition = "2024"
 description = "Fast Mermaid diagram renderer in pure Rust - 23 diagram types, 100-1400x faster than mermaid-cli"
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/1jehuang/mermaid-rs-renderer"
-homepage = "https://github.com/1jehuang/mermaid-rs-renderer"
+repository = "https://github.com/quangdang46/mermaid-rs-renderer"
+homepage = "https://github.com/quangdang46/mermaid-rs-renderer"
 keywords = ["mermaid", "diagram", "svg", "renderer", "cli"]
 categories = ["command-line-utilities", "visualization"]
 exclude = [

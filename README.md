@@ -20,8 +20,16 @@ Parse Mermaid natively and render straight to SVG (or PNG) — no Chromium, no N
 <div align="center">
 
 ```bash
+# macOS / Linux — one-liner install
+curl -fsSL "https://raw.githubusercontent.com/quangdang46/mermaid-rs-renderer/main/install.sh?$(date +%s)" | bash
+
+# Windows PowerShell
+irm "https://raw.githubusercontent.com/quangdang46/mermaid-rs-renderer/main/install.ps1" | iex
+
+# Or install from source
 cargo install mermaid-rs-renderer
-# or
+
+# Or pipe directly
 echo 'flowchart LR; A-->B-->C' | mmdr -e svg
 ```
 
@@ -151,28 +159,17 @@ mmdr -i diagram.mmd -o out.png -e png
 ## Installation
 
 ```bash
+# One-liner install (recommended)
+curl -fsSL "https://raw.githubusercontent.com/quangdang46/mermaid-rs-renderer/main/install.sh?$(date +%s)" | bash
+
 # crates.io
 cargo install mermaid-rs-renderer
 
-# Homebrew
-brew tap 1jehuang/mmdr && brew install mmdr
-
-# Scoop (Windows)
-scoop bucket add mmdr https://github.com/1jehuang/scoop-mmdr && scoop install mmdr
-
-# AUR
-yay -S mmdr-bin
-
-# Nix flake
-nix run github:1jehuang/mermaid-rs-renderer -- --help
-
-# From this fork (source)
+# From source (this fork)
 git clone https://github.com/quangdang46/mermaid-rs-renderer.git
 cd mermaid-rs-renderer
 cargo install --path .
 ```
-
-> **Note:** Upstream package/Homebrew paths may track [`1jehuang/mermaid-rs-renderer`](https://github.com/1jehuang/mermaid-rs-renderer). This fork at `quangdang46/mermaid-rs-renderer` follows the same CLI (`mmdr`).
 
 ### Library-only (minimal deps)
 

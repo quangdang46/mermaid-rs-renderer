@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -80,6 +81,7 @@ jobs:
           mkdir -p dist
           cp target/${{ matrix.target }}/release/mmdr${{ matrix.ext }} dist/
           tar -czf mmdr-${{ matrix.target }}.tar.gz -C dist .
+          sha256sum mmdr-${{ matrix.target }}.tar.gz > mmdr-${{ matrix.target }}.tar.gz.sha256
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -87,9 +89,14 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item target\\${{ matrix.target }}\\release\\mmdr.exe dist\\
           Compress-Archive -Path dist\\mmdr.exe -DestinationPath mmdr-${{ matrix.target }}.zip
+          (Get-FileHash mmdr-${{ matrix.target }}.zip -Algorithm SHA256).Hash + "  mmdr-${{ matrix.target }}.zip" | Out-File -Encoding ASCII mmdr-${{ matrix.target }}.zip.sha256
       - uses: softprops/action-gh-release@v3
         with:
-          files: mmdr-${{ matrix.target }}.*
+          files: |
+            mmdr-${{ matrix.target }}.tar.gz
+            mmdr-${{ matrix.target }}.tar.gz.sha256
+            mmdr-${{ matrix.target }}.zip
+            mmdr-${{ matrix.target }}.zip.sha256
 
   publish-crate:
     needs: [verify-tag-version, build]
