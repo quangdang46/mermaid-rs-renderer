@@ -1056,17 +1056,18 @@ impl RenderScene {
                 });
                 // Edge label
                 if let Some(label) = &edge.label
-                    && let Some(anchor) = edge.label_anchor {
-                        edge_group.items.push(RenderItem::Text {
-                            x: anchor.0,
-                            y: anchor.1 + label.height / 4.0,
-                            text: label.lines.join(" "),
-                            font_size: 12.0,
-                            font_family: None,
-                            fill: Some(theme.text_color.clone()),
-                            anchor: TextAnchor::Middle,
-                        });
-                    }
+                    && let Some(anchor) = edge.label_anchor
+                {
+                    edge_group.items.push(RenderItem::Text {
+                        x: anchor.0,
+                        y: anchor.1 + label.height / 4.0,
+                        text: label.lines.join(" "),
+                        font_size: 12.0,
+                        font_family: None,
+                        fill: Some(theme.text_color.clone()),
+                        anchor: TextAnchor::Middle,
+                    });
+                }
             }
         }
         scene.groups.push(edge_group);

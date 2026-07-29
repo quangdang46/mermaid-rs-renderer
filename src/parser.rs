@@ -79,55 +79,50 @@ pub fn parse_mermaid(input: &str) -> Result<ParseOutput> {
                 let t = line.trim();
                 !t.is_empty() && !t.starts_with("---") && !t.starts_with("%%")
             })
-            .map(|line| {
-                line.split_whitespace()
-                    .next()
-                    .unwrap_or("")
-                    .to_string()
-            })
+            .map(|line| line.split_whitespace().next().unwrap_or("").to_string())
             .unwrap_or_default();
         if !first_keyword.is_empty()
             && let Some(fuzzy) = fuzzy_detect_diagram_type(&first_keyword)
-                && fuzzy.confidence > 0.7 {
-                    diagnostics.push(crate::error::ParseDiagnostic {
-                        severity: "warning".to_string(),
-                        message: format!(
-                            "Fuzzy matched \"{}\" → \"{}\" (confidence: {:.2})",
-                            fuzzy.original, fuzzy.detected, fuzzy.confidence
-                        ),
-                        line: 1,
-                        col: 1,
-                    });
-                    let recovered =
-                        rewrite_diagram_keyword(input, &fuzzy.original, &fuzzy.canonical);
-                    let mut output = match fuzzy.detected {
-                        DiagramKind::Class => parse_class_diagram(&recovered)?,
-                        DiagramKind::State => parse_state_diagram(&recovered)?,
-                        DiagramKind::Sequence => parse_sequence_diagram(&recovered)?,
-                        DiagramKind::Er => parse_er_diagram(&recovered)?,
-                        DiagramKind::Pie => parse_pie_diagram(&recovered)?,
-                        DiagramKind::Mindmap => parse_mindmap_diagram(&recovered)?,
-                        DiagramKind::Journey => parse_journey_diagram(&recovered)?,
-                        DiagramKind::Timeline => parse_timeline_diagram(&recovered)?,
-                        DiagramKind::Gantt => parse_gantt_diagram(&recovered)?,
-                        DiagramKind::Requirement => parse_requirement_diagram(&recovered)?,
-                        DiagramKind::GitGraph => parse_gitgraph_diagram(&recovered)?,
-                        DiagramKind::C4 => parse_c4_diagram(&recovered)?,
-                        DiagramKind::Sankey => parse_sankey_diagram(&recovered)?,
-                        DiagramKind::Quadrant => parse_quadrant_diagram(&recovered)?,
-                        DiagramKind::ZenUML => parse_zenuml_diagram(&recovered)?,
-                        DiagramKind::Block => parse_block_diagram(&recovered)?,
-                        DiagramKind::Packet => parse_packet_diagram(&recovered)?,
-                        DiagramKind::Kanban => parse_kanban_diagram(&recovered)?,
-                        DiagramKind::Architecture => parse_architecture_diagram(&recovered)?,
-                        DiagramKind::Radar => parse_radar_diagram(&recovered)?,
-                        DiagramKind::Treemap => parse_treemap_diagram(&recovered)?,
-                        DiagramKind::XYChart => parse_xy_chart_diagram(&recovered)?,
-                        DiagramKind::Flowchart => parse_flowchart(&recovered)?,
-                    };
-                    output.diagnostics = diagnostics;
-                    return Ok(output);
-                }
+            && fuzzy.confidence > 0.7
+        {
+            diagnostics.push(crate::error::ParseDiagnostic {
+                severity: "warning".to_string(),
+                message: format!(
+                    "Fuzzy matched \"{}\" → \"{}\" (confidence: {:.2})",
+                    fuzzy.original, fuzzy.detected, fuzzy.confidence
+                ),
+                line: 1,
+                col: 1,
+            });
+            let recovered = rewrite_diagram_keyword(input, &fuzzy.original, &fuzzy.canonical);
+            let mut output = match fuzzy.detected {
+                DiagramKind::Class => parse_class_diagram(&recovered)?,
+                DiagramKind::State => parse_state_diagram(&recovered)?,
+                DiagramKind::Sequence => parse_sequence_diagram(&recovered)?,
+                DiagramKind::Er => parse_er_diagram(&recovered)?,
+                DiagramKind::Pie => parse_pie_diagram(&recovered)?,
+                DiagramKind::Mindmap => parse_mindmap_diagram(&recovered)?,
+                DiagramKind::Journey => parse_journey_diagram(&recovered)?,
+                DiagramKind::Timeline => parse_timeline_diagram(&recovered)?,
+                DiagramKind::Gantt => parse_gantt_diagram(&recovered)?,
+                DiagramKind::Requirement => parse_requirement_diagram(&recovered)?,
+                DiagramKind::GitGraph => parse_gitgraph_diagram(&recovered)?,
+                DiagramKind::C4 => parse_c4_diagram(&recovered)?,
+                DiagramKind::Sankey => parse_sankey_diagram(&recovered)?,
+                DiagramKind::Quadrant => parse_quadrant_diagram(&recovered)?,
+                DiagramKind::ZenUML => parse_zenuml_diagram(&recovered)?,
+                DiagramKind::Block => parse_block_diagram(&recovered)?,
+                DiagramKind::Packet => parse_packet_diagram(&recovered)?,
+                DiagramKind::Kanban => parse_kanban_diagram(&recovered)?,
+                DiagramKind::Architecture => parse_architecture_diagram(&recovered)?,
+                DiagramKind::Radar => parse_radar_diagram(&recovered)?,
+                DiagramKind::Treemap => parse_treemap_diagram(&recovered)?,
+                DiagramKind::XYChart => parse_xy_chart_diagram(&recovered)?,
+                DiagramKind::Flowchart => parse_flowchart(&recovered)?,
+            };
+            output.diagnostics = diagnostics;
+            return Ok(output);
+        }
         bail!("unknown or missing Mermaid diagram header");
     };
     match kind {
