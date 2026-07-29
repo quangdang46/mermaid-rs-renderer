@@ -213,7 +213,7 @@ archive_name_for_platform() {
             ;;
     esac
 
-    printf '%s-%s.%s' "$BINARY_NAME-$suffix" "$ext"
+    printf '%s.%s' "$BINARY_NAME-$suffix" "$ext"
 }
 
 detect_windows_arch() {
