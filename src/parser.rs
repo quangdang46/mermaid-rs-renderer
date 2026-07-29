@@ -101,30 +101,31 @@ pub fn parse_mermaid(input: &str) -> Result<ParseOutput> {
                         line: 1,
                         col: 1,
                     });
+                    let recovered = rewrite_diagram_keyword(input, &fuzzy.original, &fuzzy.canonical);
                     let mut output = match fuzzy.detected {
-                        DiagramKind::Class => parse_class_diagram(input)?,
-                        DiagramKind::State => parse_state_diagram(input)?,
-                        DiagramKind::Sequence => parse_sequence_diagram(input)?,
-                        DiagramKind::Er => parse_er_diagram(input)?,
-                        DiagramKind::Pie => parse_pie_diagram(input)?,
-                        DiagramKind::Mindmap => parse_mindmap_diagram(input)?,
-                        DiagramKind::Journey => parse_journey_diagram(input)?,
-                        DiagramKind::Timeline => parse_timeline_diagram(input)?,
-                        DiagramKind::Gantt => parse_gantt_diagram(input)?,
-                        DiagramKind::Requirement => parse_requirement_diagram(input)?,
-                        DiagramKind::GitGraph => parse_gitgraph_diagram(input)?,
-                        DiagramKind::C4 => parse_c4_diagram(input)?,
-                        DiagramKind::Sankey => parse_sankey_diagram(input)?,
-                        DiagramKind::Quadrant => parse_quadrant_diagram(input)?,
-                        DiagramKind::ZenUML => parse_zenuml_diagram(input)?,
-                        DiagramKind::Block => parse_block_diagram(input)?,
-                        DiagramKind::Packet => parse_packet_diagram(input)?,
-                        DiagramKind::Kanban => parse_kanban_diagram(input)?,
-                        DiagramKind::Architecture => parse_architecture_diagram(input)?,
-                        DiagramKind::Radar => parse_radar_diagram(input)?,
-                        DiagramKind::Treemap => parse_treemap_diagram(input)?,
-                        DiagramKind::XYChart => parse_xy_chart_diagram(input)?,
-                        DiagramKind::Flowchart => parse_flowchart(input)?,
+                        DiagramKind::Class => parse_class_diagram(&recovered)?,
+                        DiagramKind::State => parse_state_diagram(&recovered)?,
+                        DiagramKind::Sequence => parse_sequence_diagram(&recovered)?,
+                        DiagramKind::Er => parse_er_diagram(&recovered)?,
+                        DiagramKind::Pie => parse_pie_diagram(&recovered)?,
+                        DiagramKind::Mindmap => parse_mindmap_diagram(&recovered)?,
+                        DiagramKind::Journey => parse_journey_diagram(&recovered)?,
+                        DiagramKind::Timeline => parse_timeline_diagram(&recovered)?,
+                        DiagramKind::Gantt => parse_gantt_diagram(&recovered)?,
+                        DiagramKind::Requirement => parse_requirement_diagram(&recovered)?,
+                        DiagramKind::GitGraph => parse_gitgraph_diagram(&recovered)?,
+                        DiagramKind::C4 => parse_c4_diagram(&recovered)?,
+                        DiagramKind::Sankey => parse_sankey_diagram(&recovered)?,
+                        DiagramKind::Quadrant => parse_quadrant_diagram(&recovered)?,
+                        DiagramKind::ZenUML => parse_zenuml_diagram(&recovered)?,
+                        DiagramKind::Block => parse_block_diagram(&recovered)?,
+                        DiagramKind::Packet => parse_packet_diagram(&recovered)?,
+                        DiagramKind::Kanban => parse_kanban_diagram(&recovered)?,
+                        DiagramKind::Architecture => parse_architecture_diagram(&recovered)?,
+                        DiagramKind::Radar => parse_radar_diagram(&recovered)?,
+                        DiagramKind::Treemap => parse_treemap_diagram(&recovered)?,
+                        DiagramKind::XYChart => parse_xy_chart_diagram(&recovered)?,
+                        DiagramKind::Flowchart => parse_flowchart(&recovered)?,
                     };
                     output.diagnostics = diagnostics;
                     return Ok(output);
@@ -204,6 +205,8 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
 pub struct FuzzyDetection {
     pub detected: DiagramKind,
     pub original: String,
+    /// Canonical Mermaid header keyword that matched (for rewrite/recovery).
+    pub canonical: String,
     pub confidence: f32,
     pub exact_match: bool,
 }
@@ -246,12 +249,13 @@ pub fn fuzzy_detect_diagram_type(keyword: &str) -> Option<FuzzyDetection> {
         return None;
     }
 
-    // Exact match check
+    // Exact match check (case-insensitive)
     for &(known, kind) in &known_keywords {
-        if known == keyword_lower {
+        if known.to_ascii_lowercase() == keyword_lower {
             return Some(FuzzyDetection {
                 detected: kind,
                 original: keyword.to_string(),
+                canonical: known.to_string(),
                 confidence: 1.0,
                 exact_match: true,
             });
@@ -279,10 +283,48 @@ pub fn fuzzy_detect_diagram_type(keyword: &str) -> Option<FuzzyDetection> {
         FuzzyDetection {
             detected: kind,
             original: keyword.to_string(),
+            canonical: matched,
             confidence,
             exact_match: false,
         }
     })
+}
+
+/// Rewrite the first diagram header keyword so fuzzy recovery can re-parse.
+fn rewrite_diagram_keyword(input: &str, original: &str, canonical: &str) -> String {
+    let mut lines: Vec<String> = input.lines().map(|l| l.to_string()).collect();
+    let mut in_frontmatter = false;
+    for line in &mut lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed == "---" {
+            in_frontmatter = !in_frontmatter;
+            continue;
+        }
+        if in_frontmatter || trimmed.starts_with("%%") {
+            continue;
+        }
+        let leading = line.len() - line.trim_start().len();
+        let rest = &line[leading..];
+        let mut parts = rest.splitn(2, char::is_whitespace);
+        let first = parts.next().unwrap_or("");
+        if first.eq_ignore_ascii_case(original) {
+            let after = parts.next().unwrap_or("");
+            *line = if after.is_empty() {
+                format!("{}{}", &line[..leading], canonical)
+            } else {
+                format!("{}{} {}", &line[..leading], canonical, after)
+            };
+        }
+        break;
+    }
+    let mut result = lines.join("\n");
+    if input.ends_with('\n') {
+        result.push('\n');
+    }
+    result
 }
 
 fn detect_diagram_kind(input: &str) -> Option<DiagramKind> {
@@ -7642,5 +7684,37 @@ A["foo & bar"] & B --> C"#;
             masked.len(),
             "masked string should have same byte length as original"
         );
+    }
+
+    #[test]
+    fn fuzzy_detect_recovers_typoed_flowchart_header() {
+        let fuzzy = fuzzy_detect_diagram_type("flowchatr").expect("fuzzy match");
+        assert_eq!(fuzzy.detected, DiagramKind::Flowchart);
+        assert!(fuzzy.confidence > 0.7);
+        assert!(!fuzzy.exact_match);
+    }
+
+    #[test]
+    fn fuzzy_parse_rewrites_header_and_emits_diagnostic() {
+        let parsed = parse_mermaid("flowchatr LR\nA-->B").unwrap();
+        assert_eq!(parsed.graph.kind, DiagramKind::Flowchart);
+        assert!(parsed.graph.nodes.contains_key("A"));
+        assert!(parsed.graph.nodes.contains_key("B"));
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("Fuzzy matched")),
+            "expected fuzzy diagnostic, got {:?}",
+            parsed.diagnostics
+        );
+    }
+
+    #[test]
+    fn fuzzy_detect_is_case_insensitive_for_exact_keywords() {
+        let fuzzy = fuzzy_detect_diagram_type("SEQUENCEDIAGRAM").expect("exact");
+        assert!(fuzzy.exact_match);
+        assert_eq!(fuzzy.detected, DiagramKind::Sequence);
+        assert_eq!(fuzzy.canonical, "sequenceDiagram");
     }
 }

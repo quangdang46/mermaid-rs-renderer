@@ -837,6 +837,52 @@ impl LayoutAlgorithm {
             crate::ir::DiagramKind::XYChart => Self::XYChart,
         }
     }
+
+    /// Parse a CLI/config algorithm name (`auto` returns `None`).
+    pub fn parse_name(raw: &str) -> Result<Option<Self>, String> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "" | "auto" => Ok(None),
+            "sugiyama" => Ok(Some(Self::Sugiyama)),
+            "force" | "force-directed" | "forcedirected" => Ok(Some(Self::ForceDirected)),
+            "tree" => Ok(Some(Self::Tree)),
+            "radial" => Ok(Some(Self::Radial)),
+            "sequence" => Ok(Some(Self::Sequence)),
+            "pie" => Ok(Some(Self::Pie)),
+            "sankey" => Ok(Some(Self::Sankey)),
+            "grid" => Ok(Some(Self::Grid)),
+            "gantt" => Ok(Some(Self::Gantt)),
+            "gitgraph" | "git-graph" => Ok(Some(Self::GitGraph)),
+            "quadrant" => Ok(Some(Self::Quadrant)),
+            "xychart" | "xy-chart" => Ok(Some(Self::XYChart)),
+            "journey" => Ok(Some(Self::Journey)),
+            "c4" => Ok(Some(Self::C4)),
+            "error" => Ok(Some(Self::Error)),
+            other => Err(format!("unknown layout algorithm '{other}'")),
+        }
+    }
+}
+
+impl std::fmt::Display for LayoutAlgorithm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::Sugiyama => "sugiyama",
+            Self::ForceDirected => "force-directed",
+            Self::Tree => "tree",
+            Self::Radial => "radial",
+            Self::Sequence => "sequence",
+            Self::Pie => "pie",
+            Self::Sankey => "sankey",
+            Self::Grid => "grid",
+            Self::Gantt => "gantt",
+            Self::GitGraph => "git-graph",
+            Self::Quadrant => "quadrant",
+            Self::XYChart => "xychart",
+            Self::Journey => "journey",
+            Self::C4 => "c4",
+            Self::Error => "error",
+        };
+        f.write_str(name)
+    }
 }
 
 /// Cycle-breaking strategy for directed graphs with cycles.
@@ -851,6 +897,31 @@ pub enum CycleStrategy {
     Mfas,
     /// Full SCC-aware cycle detection with cluster collapse
     CycleAwareScc,
+}
+
+impl CycleStrategy {
+    /// Parse a CLI/config cycle-strategy name.
+    pub fn parse_name(raw: &str) -> Result<Self, String> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "greedy" => Ok(Self::Greedy),
+            "dfs" | "dfs-back-edge" | "dfsbackedge" => Ok(Self::DfsBackEdge),
+            "mfas" => Ok(Self::Mfas),
+            "scc" | "cycle-aware-scc" | "cycleawarescc" => Ok(Self::CycleAwareScc),
+            other => Err(format!("unknown cycle strategy '{other}'")),
+        }
+    }
+}
+
+impl std::fmt::Display for CycleStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::Greedy => "greedy",
+            Self::DfsBackEdge => "dfs-back-edge",
+            Self::Mfas => "mfas",
+            Self::CycleAwareScc => "cycle-aware-scc",
+        };
+        f.write_str(name)
+    }
 }
 
 impl RenderScene {
@@ -947,3 +1018,59 @@ impl RenderScene {
         scene
     }
 }
+
+#[cfg(test)]
+mod pattern_tests {
+    use super::*;
+    use crate::ir::DiagramKind;
+
+    #[test]
+    fn layout_algorithm_auto_selects_flowchart_sugiyama() {
+        assert_eq!(
+            LayoutAlgorithm::auto_select(&DiagramKind::Flowchart),
+            LayoutAlgorithm::Sugiyama
+        );
+        assert_eq!(
+            LayoutAlgorithm::auto_select(&DiagramKind::Sequence),
+            LayoutAlgorithm::Sequence
+        );
+    }
+
+    #[test]
+    fn layout_algorithm_parse_name_accepts_auto_and_aliases() {
+        assert_eq!(LayoutAlgorithm::parse_name("auto").unwrap(), None);
+        assert_eq!(
+            LayoutAlgorithm::parse_name("sugiyama").unwrap(),
+            Some(LayoutAlgorithm::Sugiyama)
+        );
+        assert_eq!(
+            LayoutAlgorithm::parse_name("force-directed").unwrap(),
+            Some(LayoutAlgorithm::ForceDirected)
+        );
+        assert!(LayoutAlgorithm::parse_name("nope").is_err());
+    }
+
+    #[test]
+    fn cycle_strategy_display_and_parse_roundtrip() {
+        for strategy in [
+            CycleStrategy::Greedy,
+            CycleStrategy::DfsBackEdge,
+            CycleStrategy::Mfas,
+            CycleStrategy::CycleAwareScc,
+        ] {
+            let parsed = CycleStrategy::parse_name(&strategy.to_string()).unwrap();
+            assert_eq!(parsed, strategy);
+        }
+    }
+
+    #[test]
+    fn decision_ledger_records_entries_with_trace_id() {
+        let mut ledger = DecisionLedger::default();
+        ledger.record("dispatch", "diagram_type=flowchart", "test", None);
+        ledger.metric("finalize", "nodes", 3.0);
+        assert!(!ledger.trace_id.to_string().is_empty());
+        assert_eq!(ledger.entries.len(), 2);
+        assert_eq!(ledger.entries[1].metric, Some(3.0));
+    }
+}
+

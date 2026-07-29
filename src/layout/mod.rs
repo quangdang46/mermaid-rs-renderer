@@ -178,16 +178,36 @@ pub fn compute_layout_with_metrics(
     let graph = graph.as_ref();
     let mut stage_metrics = LayoutStageMetrics::default();
     let mut ledger = DecisionLedger::default();
-    let _trace_id = ledger.trace_id.to_string();
+    let selected_algo = config
+        .layout_algorithm
+        .unwrap_or_else(|| LayoutAlgorithm::auto_select(&graph.kind));
+    let cycle_strategy = config.cycle_strategy;
     ledger.record(
         "dispatch",
         &format!("diagram_type={}", graph.kind),
-        &format!("Selected layout algorithm for {} diagram", graph.kind),
+        &format!("Selected layout pipeline for {} diagram", graph.kind),
         None,
     );
-    // Record selected algorithm in ledger
-    let selected_algo = config.layout_algorithm.unwrap_or_else(|| LayoutAlgorithm::auto_select(&graph.kind));
-    ledger.record("algorithm", &format!("{:?}", selected_algo), &format!("Auto-selected {:?} for {:?} diagram", selected_algo, graph.kind), None);
+    ledger.record(
+        "algorithm",
+        &selected_algo.to_string(),
+        &format!(
+            "{} for {} diagram",
+            if config.layout_algorithm.is_some() {
+                "User-selected"
+            } else {
+                "Auto-selected"
+            },
+            graph.kind
+        ),
+        None,
+    );
+    ledger.record(
+        "cycle_strategy",
+        &cycle_strategy.to_string(),
+        "Cycle-breaking strategy for directed graphs with cycles",
+        None,
+    );
     let mut layout = match graph.kind {
         crate::ir::DiagramKind::Sequence | crate::ir::DiagramKind::ZenUML => {
             compute_sequence_layout(graph, theme, config)
@@ -244,6 +264,19 @@ pub fn compute_layout_with_metrics(
     stage_metrics.label_placement_us = stage_metrics
         .label_placement_us
         .saturating_add(label_start.elapsed().as_micros());
+
+    ledger.record(
+        "finalize",
+        "layout_complete",
+        &format!(
+            "nodes={} edges={} size={:.0}x{:.0}",
+            layout.nodes.len(),
+            layout.edges.len(),
+            layout.width,
+            layout.height
+        ),
+        Some(layout.nodes.len() as f64),
+    );
 
     #[cfg(debug_assertions)]
     if layout.kind == crate::ir::DiagramKind::Flowchart {
