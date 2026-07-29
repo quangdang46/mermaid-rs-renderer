@@ -116,10 +116,10 @@ pub use ir::{
     StateNotePosition, Subgraph,
 };
 pub use layout::{
-    compute_layout, compute_layout_with_ledger, compute_layout_with_metrics,
-    DecisionLedger, DecisionEntry, EdgeLayout, Layout, LayoutStageMetrics, NodeLayout,
-    SubgraphLayout, TraceId, LayoutAlgorithm, CycleStrategy, validate_layout_invariants,
-    LayoutInvariantError, RenderScene, RenderGroup, RenderItem, TextAnchor,
+    CycleStrategy, DecisionEntry, DecisionLedger, EdgeLayout, Layout, LayoutAlgorithm,
+    LayoutInvariantError, LayoutStageMetrics, NodeLayout, RenderGroup, RenderItem, RenderScene,
+    SubgraphLayout, TextAnchor, TraceId, compute_layout, compute_layout_with_ledger,
+    compute_layout_with_metrics, validate_layout_invariants,
 };
 pub use parser::{FuzzyDetection, ParseOutput, fuzzy_detect_diagram_type, parse_mermaid};
 #[cfg(feature = "png")]
@@ -131,7 +131,10 @@ pub use png::{
 };
 #[cfg(feature = "png")]
 pub use render::write_output_png;
-pub use render::{SvgDimensions, measure_svg_dimensions, render_svg, scene_to_svg, render_svg_via_scene, write_output_svg};
+pub use render::{
+    SvgDimensions, measure_svg_dimensions, render_svg, render_svg_via_scene, scene_to_svg,
+    write_output_svg,
+};
 pub use term::{render_term, render_term_layout, render_term_scene};
 pub use theme::Theme;
 

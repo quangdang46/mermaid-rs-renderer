@@ -23,7 +23,12 @@ impl TraceId {
             .unwrap_or_default()
             .as_nanos();
         let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed) as u128;
-        Self(pid.wrapping_mul(3).wrapping_add(time).wrapping_mul(7).wrapping_add(seq))
+        Self(
+            pid.wrapping_mul(3)
+                .wrapping_add(time)
+                .wrapping_mul(7)
+                .wrapping_add(seq),
+        )
     }
 }
 
@@ -60,20 +65,28 @@ pub struct RenderGroup {
 #[derive(Debug, Clone)]
 pub enum RenderItem {
     Rect {
-        x: f32, y: f32, w: f32, h: f32,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
         rx: Option<f32>,
         fill: Option<String>,
         stroke: Option<String>,
         stroke_width: f32,
     },
     Circle {
-        cx: f32, cy: f32, r: f32,
+        cx: f32,
+        cy: f32,
+        r: f32,
         fill: Option<String>,
         stroke: Option<String>,
         stroke_width: f32,
     },
     Line {
-        x1: f32, y1: f32, x2: f32, y2: f32,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
         stroke: Option<String>,
         stroke_width: f32,
     },
@@ -84,7 +97,8 @@ pub enum RenderItem {
         fill: Option<String>,
     },
     Text {
-        x: f32, y: f32,
+        x: f32,
+        y: f32,
         text: String,
         font_size: f32,
         font_family: Option<String>,
@@ -926,7 +940,11 @@ impl std::fmt::Display for CycleStrategy {
 
 impl RenderScene {
     /// Build a RenderScene from a completed Layout.
-    pub fn from_layout(layout: &Layout, theme: &crate::theme::Theme, _config: &crate::config::LayoutConfig) -> Self {
+    pub fn from_layout(
+        layout: &Layout,
+        theme: &crate::theme::Theme,
+        _config: &crate::config::LayoutConfig,
+    ) -> Self {
         let mut scene = RenderScene {
             width: layout.width,
             height: layout.height,
@@ -940,10 +958,23 @@ impl RenderScene {
                 items: Vec::new(),
             };
             group.items.push(RenderItem::Rect {
-                x: sg.x, y: sg.y, w: sg.width, h: sg.height,
+                x: sg.x,
+                y: sg.y,
+                w: sg.width,
+                h: sg.height,
                 rx: Some(8.0),
-                fill: Some(sg.style.fill.clone().unwrap_or_else(|| "#ffffff".to_string())),
-                stroke: Some(sg.style.stroke.clone().unwrap_or_else(|| "#cccccc".to_string())),
+                fill: Some(
+                    sg.style
+                        .fill
+                        .clone()
+                        .unwrap_or_else(|| "#ffffff".to_string()),
+                ),
+                stroke: Some(
+                    sg.style
+                        .stroke
+                        .clone()
+                        .unwrap_or_else(|| "#cccccc".to_string()),
+                ),
                 stroke_width: sg.style.stroke_width.unwrap_or(1.0),
             });
             // Subgraph label
@@ -960,19 +991,37 @@ impl RenderScene {
         }
 
         // Nodes
-        let mut node_group = RenderGroup { label: Some("nodes".to_string()), items: Vec::new() };
+        let mut node_group = RenderGroup {
+            label: Some("nodes".to_string()),
+            items: Vec::new(),
+        };
         for node in layout.nodes.values() {
-            if node.hidden { continue; }
+            if node.hidden {
+                continue;
+            }
             let rx = match node.shape {
                 crate::ir::NodeShape::RoundRect | crate::ir::NodeShape::Stadium => Some(6.0),
                 crate::ir::NodeShape::Diamond => None,
                 _ => None,
             };
             node_group.items.push(RenderItem::Rect {
-                x: node.x, y: node.y, w: node.width, h: node.height,
+                x: node.x,
+                y: node.y,
+                w: node.width,
+                h: node.height,
                 rx,
-                fill: Some(node.style.fill.clone().unwrap_or_else(|| theme.primary_color.clone())),
-                stroke: Some(node.style.stroke.clone().unwrap_or_else(|| theme.primary_border_color.clone())),
+                fill: Some(
+                    node.style
+                        .fill
+                        .clone()
+                        .unwrap_or_else(|| theme.primary_color.clone()),
+                ),
+                stroke: Some(
+                    node.style
+                        .stroke
+                        .clone()
+                        .unwrap_or_else(|| theme.primary_border_color.clone()),
+                ),
                 stroke_width: node.style.stroke_width.unwrap_or(2.0),
             });
             node_group.items.push(RenderItem::Text {
@@ -981,14 +1030,22 @@ impl RenderScene {
                 text: node.label.lines.join(" "),
                 font_size: 14.0,
                 font_family: None,
-                fill: Some(node.style.text_color.clone().unwrap_or_else(|| theme.primary_text_color.clone())),
+                fill: Some(
+                    node.style
+                        .text_color
+                        .clone()
+                        .unwrap_or_else(|| theme.primary_text_color.clone()),
+                ),
                 anchor: TextAnchor::Middle,
             });
         }
         scene.groups.push(node_group);
 
         // Edges
-        let mut edge_group = RenderGroup { label: Some("edges".to_string()), items: Vec::new() };
+        let mut edge_group = RenderGroup {
+            label: Some("edges".to_string()),
+            items: Vec::new(),
+        };
         for edge in &layout.edges {
             if edge.points.len() >= 2 {
                 edge_group.items.push(RenderItem::Polyline {
@@ -1073,4 +1130,3 @@ mod pattern_tests {
         assert_eq!(ledger.entries[1].metric, Some(3.0));
     }
 }
-

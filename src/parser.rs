@@ -94,14 +94,13 @@ pub fn parse_mermaid(input: &str) -> Result<ParseOutput> {
                         severity: "warning".to_string(),
                         message: format!(
                             "Fuzzy matched \"{}\" → \"{}\" (confidence: {:.2})",
-                            fuzzy.original,
-                            fuzzy.detected,
-                            fuzzy.confidence
+                            fuzzy.original, fuzzy.detected, fuzzy.confidence
                         ),
                         line: 1,
                         col: 1,
                     });
-                    let recovered = rewrite_diagram_keyword(input, &fuzzy.original, &fuzzy.canonical);
+                    let recovered =
+                        rewrite_diagram_keyword(input, &fuzzy.original, &fuzzy.canonical);
                     let mut output = match fuzzy.detected {
                         DiagramKind::Class => parse_class_diagram(&recovered)?,
                         DiagramKind::State => parse_state_diagram(&recovered)?,
@@ -135,29 +134,98 @@ pub fn parse_mermaid(input: &str) -> Result<ParseOutput> {
         bail!("unknown or missing Mermaid diagram header");
     };
     match kind {
-        DiagramKind::Class => parse_class_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::State => parse_state_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::Sequence => parse_sequence_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::Er => parse_er_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::Pie => parse_pie_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::Mindmap => parse_mindmap_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::Journey => parse_journey_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::Timeline => parse_timeline_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::Gantt => parse_gantt_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::Requirement => parse_requirement_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::GitGraph => parse_gitgraph_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::C4 => parse_c4_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::Sankey => parse_sankey_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::Quadrant => parse_quadrant_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::ZenUML => parse_zenuml_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::Block => parse_block_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::Packet => parse_packet_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::Kanban => parse_kanban_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::Architecture => parse_architecture_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::Radar => parse_radar_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::Treemap => parse_treemap_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::XYChart => parse_xy_chart_diagram(input).map(|mut o| { o.diagnostics = diagnostics; o }),
-        DiagramKind::Flowchart => parse_flowchart(input).map(|mut o| { o.diagnostics = diagnostics; o }),
+        DiagramKind::Class => parse_class_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::State => parse_state_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::Sequence => parse_sequence_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::Er => parse_er_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::Pie => parse_pie_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::Mindmap => parse_mindmap_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::Journey => parse_journey_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::Timeline => parse_timeline_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::Gantt => parse_gantt_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::Requirement => parse_requirement_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::GitGraph => parse_gitgraph_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::C4 => parse_c4_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::Sankey => parse_sankey_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::Quadrant => parse_quadrant_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::ZenUML => parse_zenuml_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::Block => parse_block_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::Packet => parse_packet_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::Kanban => parse_kanban_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::Architecture => parse_architecture_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::Radar => parse_radar_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::Treemap => parse_treemap_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::XYChart => parse_xy_chart_diagram(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
+        DiagramKind::Flowchart => parse_flowchart(input).map(|mut o| {
+            o.diagnostics = diagnostics;
+            o
+        }),
     }
 }
 
@@ -190,10 +258,8 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
         curr[0] = i as isize + 1;
         for (j, cb) in b.chars().enumerate() {
             let cost = if ca == cb { 0 } else { 1 };
-            curr[j + 1] = std::cmp::min(
-                std::cmp::min(curr[j] + 1, prev[j + 1] + 1),
-                prev[j] + cost,
-            );
+            curr[j + 1] =
+                std::cmp::min(std::cmp::min(curr[j] + 1, prev[j + 1] + 1), prev[j] + cost);
         }
         std::mem::swap(&mut prev, &mut curr);
     }

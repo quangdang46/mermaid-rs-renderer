@@ -6,8 +6,8 @@ use crate::layout::label_placement::{
 };
 use crate::layout::{
     C4BoundaryLayout, C4Layout, C4RelLayout, C4ShapeLayout, DiagramData, ErrorLayout,
-    GitGraphLayout, JourneyLayout, Layout, PieData, RenderScene, RenderItem,
-    SankeyLayout, TextAnchor, TextBlock,
+    GitGraphLayout, JourneyLayout, Layout, PieData, RenderItem, RenderScene, SankeyLayout,
+    TextAnchor, TextBlock,
 };
 use crate::text_metrics;
 use crate::theme::{Theme, adjust_color, parse_color_to_hsl};
@@ -6384,15 +6384,25 @@ pub fn scene_to_svg(
         r#"<defs><style>text {{ font-family: {}, sans-serif; }}</style></defs>"#,
         theme.font_family,
     ));
-    svg.push_str(&format!(
-        r#"<g transform="translate({pad},{pad})">"#,
-    ));
+    svg.push_str(&format!(r#"<g transform="translate({pad},{pad})">"#,));
 
     for group in &scene.groups {
-        svg.push_str(&format!(r#"<g data-group="{}">"#, group.label.as_deref().unwrap_or("")));
+        svg.push_str(&format!(
+            r#"<g data-group="{}">"#,
+            group.label.as_deref().unwrap_or("")
+        ));
         for item in &group.items {
             match item {
-                RenderItem::Rect { x, y, w, h, rx, fill, stroke, stroke_width } => {
+                RenderItem::Rect {
+                    x,
+                    y,
+                    w,
+                    h,
+                    rx,
+                    fill,
+                    stroke,
+                    stroke_width,
+                } => {
                     let rx_attr = rx.map(|r| format!(r#" rx="{r}""#)).unwrap_or_default();
                     svg.push_str(&format!(
                         r#"<rect x="{x}" y="{y}" width="{w}" height="{h}"{rx_attr} fill="{}" stroke="{}" stroke-width="{stroke_width}"/>"#,
@@ -6400,28 +6410,59 @@ pub fn scene_to_svg(
                         stroke.as_deref().unwrap_or("none"),
                     ));
                 }
-                RenderItem::Circle { cx, cy, r, fill, stroke, stroke_width } => {
+                RenderItem::Circle {
+                    cx,
+                    cy,
+                    r,
+                    fill,
+                    stroke,
+                    stroke_width,
+                } => {
                     svg.push_str(&format!(
                         r#"<circle cx="{cx}" cy="{cy}" r="{r}" fill="{}" stroke="{}" stroke-width="{stroke_width}"/>"#,
                         fill.as_deref().unwrap_or("none"),
                         stroke.as_deref().unwrap_or("none"),
                     ));
                 }
-                RenderItem::Polyline { points, stroke, stroke_width, fill } => {
-                    let pts: String = points.iter().map(|(x, y)| format!("{x},{y}")).collect::<Vec<_>>().join(" ");
+                RenderItem::Polyline {
+                    points,
+                    stroke,
+                    stroke_width,
+                    fill,
+                } => {
+                    let pts: String = points
+                        .iter()
+                        .map(|(x, y)| format!("{x},{y}"))
+                        .collect::<Vec<_>>()
+                        .join(" ");
                     svg.push_str(&format!(
                         r#"<polyline points="{pts}" fill="{}" stroke="{}" stroke-width="{stroke_width}"/>"#,
                         fill.as_deref().unwrap_or("none"),
                         stroke.as_deref().unwrap_or("none"),
                     ));
                 }
-                RenderItem::Line { x1, y1, x2, y2, stroke, stroke_width } => {
+                RenderItem::Line {
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    stroke,
+                    stroke_width,
+                } => {
                     svg.push_str(&format!(
                         r#"<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{}" stroke-width="{stroke_width}"/>"#,
                         stroke.as_deref().unwrap_or("none"),
                     ));
                 }
-                RenderItem::Text { x, y, text, font_size, fill, anchor, .. } => {
+                RenderItem::Text {
+                    x,
+                    y,
+                    text,
+                    font_size,
+                    fill,
+                    anchor,
+                    ..
+                } => {
                     let anchor_str = match anchor {
                         TextAnchor::Start => "start",
                         TextAnchor::Middle => "middle",
@@ -6433,7 +6474,12 @@ pub fn scene_to_svg(
                         text,
                     ));
                 }
-                RenderItem::Path { d, fill, stroke, stroke_width } => {
+                RenderItem::Path {
+                    d,
+                    fill,
+                    stroke,
+                    stroke_width,
+                } => {
                     svg.push_str(&format!(
                         r#"<path d="{d}" fill="{}" stroke="{}" stroke-width="{stroke_width}"/>"#,
                         fill.as_deref().unwrap_or("none"),

@@ -1,6 +1,6 @@
 use crate::config::{Config, load_config_with_theme};
-use crate::layout::{CycleStrategy, LayoutAlgorithm, compute_layout_with_metrics};
 use crate::layout::validate_layout_invariants;
+use crate::layout::{CycleStrategy, LayoutAlgorithm, compute_layout_with_metrics};
 use crate::layout_dump::write_layout_dump;
 use crate::parser::parse_mermaid;
 #[cfg(feature = "png")]
